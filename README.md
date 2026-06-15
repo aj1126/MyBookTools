@@ -1,3 +1,12 @@
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/AJ1126/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/actions/workflow/status/AJ1126/MyBookTools/ci.yml?style=for-the-badge" />
+  <img src="https://img.shields.io/powershellgallery/v/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/license/AJ1126/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/issues/AJ1126/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/stars/AJ1126/MyBookTools?style=for-the-badge" />
+</p>
+
 # 📦 MyBookTools
 
 > A PowerShell module for auditing, organizing, deduplicating, and maintaining large external drives (3 TB+).
