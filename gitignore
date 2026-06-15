@@ -1,0 +1,20 @@
+# PowerShell build artifacts
+*.psd1
+*.psm1
+*.ps1xml
+*.pssc
+
+# Logs
+*.log
+MyBookLogs/
+
+# VSCode
+.vscode/
+.history/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Pester test output
+TestResults/
