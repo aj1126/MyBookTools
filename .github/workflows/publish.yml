@@ -1,0 +1,16 @@
+name: Publish to PSGallery
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Publish Module
+      shell: pwsh
+      run: |
+        Publish-Module -Path ./src -NuGetApiKey ${{ secrets.PSGALLERY_KEY }}

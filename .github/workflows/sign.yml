@@ -1,0 +1,18 @@
+name: Sign Module
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Import Code Signing Certificate
+      run: |
+        $cert = Import-PfxCertificate -FilePath certs/MyBookTools.pfx -Password (ConvertTo-SecureString "${{ secrets.CERT_PASSWORD }}" -AsPlainText -Force) -CertStoreLocation Cert:\CurrentUser\My
+
+    - name: Sign Module
+      run: |
+        Set-AuthenticodeSignature -FilePath src/MyBookTools.psm1 -Certificate $cert

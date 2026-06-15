@@ -1,0 +1,9 @@
+Id: AJukesProduction.MyBookTools
+Publisher: AJukesProduction
+Name: MyBookTools
+Version: 2.0.0
+InstallerType: zip
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/aj1126/MyBookTools/releases/download/v2.0.0/MyBookTools_2.0.0.zip
+    InstallerSha256: <to-be-filled>

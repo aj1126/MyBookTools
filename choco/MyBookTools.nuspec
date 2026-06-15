@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>MyBookTools</id>
+    <version>2.0.0</version>
+    <title>MyBookTools</title>
+    <authors>A.Jukes III</authors>
+    <owners>A.Jukes III</owners>
+    <description>Drive auditing and maintenance toolkit.</description>
+    <tags>powershell drive audit maintenance</tags>
+  </metadata>
+</package>
