@@ -1,9 +1,21 @@
 site_name: MyBookTools
+site_description: "PowerShell tools for large drive maintenance"
+site_url: https://aj1126.github.io/MyBookTools/
 repo_url: https://github.com/AJ1126/MyBookTools
 theme:
   name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep orange
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.highlight
+    - search.suggest
 nav:
   - Home: index.md
   - Installation: install.md
   - Commands: commands.md
   - Examples: examples.md
+  - API: api/MyBookTools.md

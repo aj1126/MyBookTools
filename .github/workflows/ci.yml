@@ -9,7 +9,6 @@ on:
 jobs:
   test:
     runs-on: windows-latest
-
     steps:
     - uses: actions/checkout@v3
 
@@ -17,7 +16,12 @@ jobs:
       shell: pwsh
       run: Install-Module Pester -Force -Scope CurrentUser
 
-    - name: Run Tests
+    - name: Run Tests with Coverage
       shell: pwsh
       run: |
-        Invoke-Pester -Path tests -Output Detailed
+        Invoke-Pester -Path tests `
+          -Output Detailed `
+          -CodeCoverage src/MyBookTools.psm1 `
+          -PassThru | Tee-Object -Variable result | Out-Null
+        $coverage = $result.CodeCoverage
+        Write-Host "Coverage: $($coverage.CoveragePercent)%"
