@@ -6,7 +6,7 @@
 @{
 
 # ── Identity ──────────────────────────────────────────────────────────────────
-ModuleVersion     = '2.0.0'
+ModuleVersion = '3.0.0'
 GUID              = 'a3f7c2d1-84b6-4e9a-bc13-f0d25e671048'   # regenerate with [guid]::NewGuid() if forking
 RootModule        = 'MyBookTools.psm1'
 
@@ -65,3 +65,4 @@ PrivateData = @{
 }
 
 }
+
