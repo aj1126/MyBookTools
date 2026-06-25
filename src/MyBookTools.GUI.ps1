@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     MyBookTools WPF GUI — graphical launcher for all MyBookTools operations.
@@ -140,13 +140,14 @@ if (-not (Get-Module MyBookTools)) {
         </WrapPanel>
 
         <!-- Action buttons -->
-        <UniformGrid Grid.Row="3" Columns="4" Margin="0,0,0,8">
+        <UniformGrid Grid.Row="3" Columns="3" Margin="0,0,0,8">
             <Button x:Name="BtnAudit"    Content="🔍 Audit"        Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnHashCache" Content="💾 Hash Cache"  Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnCategorize" Content="📂 Categorize" Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnDupes"    Content="♻️ Dedup"        Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnCleanup"  Content="🧹 Cleanup"      Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnMap"      Content="🌳 Visual Map"   Style="{StaticResource ActionBtn}"/>
+            <Button x:Name="BtnPredict"  Content="🔮 Predict"      Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnSchedule" Content="⏰ Schedule"     Style="{StaticResource ActionBtn}"/>
             <Button x:Name="BtnClearLog" Content="🗑️ Clear Log"    Style="{StaticResource ActionBtn}"/>
         </UniformGrid>
@@ -371,6 +372,41 @@ $window.FindName('BtnSchedule').Add_Click({
     Set-Status "Idle"
 })
 
+# ── Predict ───────────────────────────────────────────────────────────────────
+$window.FindName('BtnPredict').Add_Click({
+    $root       = $txtRoot.Text
+    $withHashes = $chkHashes.IsChecked
+    Set-Status "Predicting scan duration…" '#F9E2AF'
+    Append-Log "Starting scan duration prediction for '$root' (Hashes=$withHashes)"
+    $job = Start-Job -ScriptBlock {
+        param($r,$h)
+        Import-Module MyBookTools
+        Get-MyBookScanPrediction -RootPath $r -IncludeHashes:$h
+    } -ArgumentList $root,$withHashes
+    Register-ObjectEvent $job -EventName StateChanged -Action {
+        $prediction = $job | Receive-Job -ErrorAction SilentlyContinue
+        if ($prediction) {
+            Append-Log "--------------------------------------------"
+            Append-Log "Scan Duration Prediction Results:"
+            Append-Log "  Root Path: $($prediction.RootPath)"
+            Append-Log "  Estimated Files: {0:N0}" -f $prediction.EstimatedFileCount
+            Append-Log "  Estimated Size: {0:N2} GB" -f ($prediction.EstimatedTotalSizeBytes / 1GB)
+            Append-Log "  Traversal Speed: {0:N0} files/sec" -f $prediction.TraversalSpeedFilesPerSec
+            Append-Log "  Estimated Traversal: $($prediction.EstimatedTraversalDuration)"
+            if ($prediction.IncludeHashes) {
+                Append-Log "  Hashing Speed: {0:N2} MB/sec" -f ($prediction.HashingSpeedBytesPerSec / 1MB)
+                Append-Log "  Estimated Hashing: $($prediction.EstimatedHashingDuration)"
+            }
+            Append-Log "  Total Estimated Duration: $($prediction.TotalEstimatedDuration)"
+            Append-Log "--------------------------------------------"
+        } else {
+            Append-Log "Failed to retrieve prediction."
+        }
+        Set-Status "Idle"
+        $job | Remove-Job -Force
+    } | Out-Null
+})
+
 # ── Clear log ─────────────────────────────────────────────────────────────────
 $window.FindName('BtnClearLog').Add_Click({
     $txtLog.Clear()
@@ -393,3 +429,4 @@ $timer.Start()
 Append-Log "MyBookTools GUI ready. Root='$($txtRoot.Text)'"
 [void]$window.ShowDialog()
 $timer.Stop()
+

@@ -19,9 +19,12 @@ jobs:
     - name: Run Tests with Coverage
       shell: pwsh
       run: |
-        Invoke-Pester -Path tests `
-          -Output Detailed `
-          -CodeCoverage src/MyBookTools.psm1 `
-          -PassThru | Tee-Object -Variable result | Out-Null
+        $config = New-PesterConfiguration
+        $config.Run.Path = 'tests'
+        $config.Output.Verbosity = 'Detailed'
+        $config.CodeCoverage.Enabled = $true
+        $config.CodeCoverage.Path = 'src/MyBookTools.psm1'
+        $config.Run.PassThru = $true
+        $result = Invoke-Pester -Configuration $config
         $coverage = $result.CodeCoverage
         Write-Host "Coverage: $($coverage.CoveragePercent)%"

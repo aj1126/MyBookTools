@@ -615,7 +615,185 @@ Invoke-MyBookAuditFast | Out-Null
 }
 
 # =====================================================================
+#  SCAN PREDICTION
+# =====================================================================
+
+function Get-MyBookScanPrediction {
+<#
+.SYNOPSIS
+    Predicts the duration of a scan on a given path.
+
+.PARAMETER RootPath
+    The directory to analyze.
+
+.PARAMETER IncludeHashes
+    Whether the scan will compute hashes.
+
+.PARAMETER UseCache
+    Whether the scan will utilize the hash cache.
+
+.EXAMPLE
+    Get-MyBookScanPrediction -RootPath M:\ -IncludeHashes
+#>
+    param(
+        [string]$RootPath = $Script:MyBook_DefaultRoot,
+        [switch]$IncludeHashes,
+        [switch]$UseCache = $true
+    )
+
+    if (-not (Test-Path $RootPath)) {
+        throw "Path '$RootPath' does not exist."
+    }
+
+    Set-MyBookStatus -Operation "Predict" -Details "Predicting scan duration for $RootPath"
+
+    # 1. Timed traversal (up to 1.5 seconds)
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $filesCount = 0
+    $totalSize = 0
+    
+    # Use .NET Directory EnumerateFiles to perform fast, interruptible traversal
+    $enumerator = [System.IO.Directory]::EnumerateFiles($RootPath, "*", [System.IO.SearchOption]::AllDirectories).GetEnumerator()
+    $completedTraversal = $true
+
+    while ($true) {
+        if ($stopwatch.ElapsedMilliseconds -ge 1500) {
+            $completedTraversal = $false
+            break
+        }
+        try {
+            if (-not $enumerator.MoveNext()) {
+                break
+            }
+            $filesCount++
+            $file = [System.IO.FileInfo]::new($enumerator.Current)
+            $totalSize += $file.Length
+        } catch {
+            # Skip errors (access denied etc.)
+        }
+    }
+    $stopwatch.Stop()
+    $traversalTimeSec = $stopwatch.Elapsed.TotalSeconds
+
+    # 2. Extrapolate total files/size using drive metadata if traversal did not complete
+    $estFileCount = $filesCount
+    $estTotalSize = $totalSize
+
+    if (-not $completedTraversal -and $filesCount -gt 0) {
+        try {
+            # Try to get volume used bytes
+            $driveQualifier = Split-Path $RootPath -Qualifier
+            if ($driveQualifier) {
+                $drive = [System.IO.DriveInfo]::new($driveQualifier)
+                $usedBytes = $drive.TotalSize - $drive.TotalFreeSpace
+                if ($usedBytes -gt $totalSize) {
+                    $ratio = $usedBytes / $totalSize
+                    $estFileCount = [math]::Round($filesCount * $ratio)
+                    $estTotalSize = $usedBytes
+                }
+            } else {
+                # Fallback scaling
+                $estFileCount = $filesCount * 5
+                $estTotalSize = $totalSize * 5
+            }
+        } catch {
+            # Fallback scaling
+            $estFileCount = $filesCount * 5
+            $estTotalSize = $totalSize * 5
+        }
+    }
+
+    # 3. Calculate traversal speed (files/sec)
+    $traversalSpeed = 2000 # default fallback
+    if ($traversalTimeSec -gt 0 -and $filesCount -gt 0) {
+        $traversalSpeed = $filesCount / $traversalTimeSec
+    }
+    
+    # Estimated traversal time
+    $estTraversalDurationSec = 0
+    if ($traversalSpeed -gt 0) {
+        $estTraversalDurationSec = $estFileCount / $traversalSpeed
+    }
+
+    # 4. Measure Hashing Speed (Benchmark)
+    $hashingSpeed = 50MB # Default 50MB/sec fallback
+    $estHashingDurationSec = 0
+
+    if ($IncludeHashes) {
+        # Timed hashing benchmark (hash files we already enumerated up to 10MB or 0.5 seconds)
+        $hashStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $bytesHashed = 0
+        $benchmarkFiles = @()
+        
+        # Collect some small files that actually exist and we can read
+        $sampleCount = 0
+        try {
+            $enumerator2 = [System.IO.Directory]::EnumerateFiles($RootPath, "*", [System.IO.SearchOption]::AllDirectories).GetEnumerator()
+            while ($enumerator2.MoveNext() -and $sampleCount -lt 10) {
+                $fPath = $enumerator2.Current
+                if (Test-Path $fPath) {
+                    $fInfo = [System.IO.FileInfo]::new($fPath)
+                    if ($fInfo.Length -gt 0 -and $fInfo.Length -lt 10MB) {
+                        $benchmarkFiles += $fPath
+                        $sampleCount++
+                    }
+                }
+            }
+        } catch {}
+        
+        foreach ($f in $benchmarkFiles) {
+            if ($hashStopwatch.ElapsedMilliseconds -ge 500 -or $bytesHashed -ge 10MB) {
+                break
+            }
+            try {
+                $len = (Get-Item -LiteralPath $f).Length
+                $null = Get-FileHash -LiteralPath $f
+                $bytesHashed += $len
+            } catch {}
+        }
+        $hashStopwatch.Stop()
+        $hashTimeSec = $hashStopwatch.Elapsed.TotalSeconds
+
+        if ($hashTimeSec -gt 0 -and $bytesHashed -gt 0) {
+            $hashingSpeed = $bytesHashed / $hashTimeSec
+        }
+
+        # 5. Account for Hash Cache if UseCache is true
+        $sizeToHash = $estTotalSize
+        if ($UseCache) {
+            $cachePath = Join-Path $Script:MyBook_DefaultLogRoot 'MyBook_HashCache.json'
+            if (Test-Path $cachePath) {
+                # Assume 90% of files are cached (cache hit), so we only hash 10%
+                $sizeToHash = $estTotalSize * 0.10
+            }
+        }
+        
+        if ($hashingSpeed -gt 0) {
+            $estHashingDurationSec = $sizeToHash / $hashingSpeed
+        }
+    }
+
+    $totalEstDurationSec = $estTraversalDurationSec + $estHashingDurationSec
+
+    Clear-MyBookStatus
+
+    return [PSCustomObject]@{
+        RootPath                   = $RootPath
+        IncludeHashes              = $IncludeHashes
+        UseCache                   = $UseCache
+        EstimatedFileCount         = [int]$estFileCount
+        EstimatedTotalSizeBytes    = [long]$estTotalSize
+        TraversalSpeedFilesPerSec  = [double][math]::Round($traversalSpeed, 2)
+        HashingSpeedBytesPerSec    = [double][math]::Round($hashingSpeed, 2)
+        EstimatedTraversalDuration = [TimeSpan]::FromSeconds($estTraversalDurationSec)
+        EstimatedHashingDuration   = [TimeSpan]::FromSeconds($estHashingDurationSec)
+        TotalEstimatedDuration     = [TimeSpan]::FromSeconds($totalEstDurationSec)
+    }
+}
+
+# =====================================================================
 #  EXPORT MODULE MEMBERS
 # =====================================================================
 
 Export-ModuleMember -Function *-MyBook*, Show-MyBookVisualMap
+
