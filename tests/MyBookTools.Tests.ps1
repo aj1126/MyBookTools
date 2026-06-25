@@ -3,7 +3,7 @@ Import-Module "$PSScriptRoot/../src/MyBookTools.psm1" -Force
 
 Describe "MyBookTools Module" {
     It "loads without error" {
-        (Get-Module MyBookTools) | Should Not BeNullOrEmpty
+        (Get-Module MyBookTools) | Should -Not -BeNullOrEmpty
     }
 
     It "exports expected functions" {
@@ -14,7 +14,7 @@ Describe "MyBookTools Module" {
             'Register-MyBookMaintenanceTask', 'Get-MyBookScanPrediction'
         )
         foreach ($fn in $expected) {
-            Get-Command $fn -ErrorAction SilentlyContinue | Should Not BeNullOrEmpty
+            Get-Command $fn -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
         }
     }
 }
@@ -26,7 +26,7 @@ Describe "Audit Functions" {
         $null = New-Item -Path (Join-Path $tempFolder "file.txt") -ItemType File -Value "test"
         try {
             $path = Invoke-MyBookAuditFast -RootPath $tempFolder
-            Test-Path $path | Should Be $true
+            Test-Path $path | Should -Be $true
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -38,7 +38,7 @@ Describe "Audit Functions" {
         $null = New-Item -Path (Join-Path $tempFolder "file.txt") -ItemType File -Value "test"
         try {
             $path = Invoke-MyBookAuditFast -RootPath $tempFolder -IncludeHashes
-            Test-Path $path | Should Be $true
+            Test-Path $path | Should -Be $true
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -50,7 +50,7 @@ Describe "Categorization" {
         $tempFolder = Join-Path $env:TEMP "MyBookCategorizeTest_$(Get-Random)"
         $null = New-Item -Path $tempFolder -ItemType Directory -Force
         try {
-            { Invoke-MyBookCategorize -RootPath $tempFolder -DryRun } | Should Not Throw
+            { Invoke-MyBookCategorize -RootPath $tempFolder -DryRun } | Should -Not -Throw
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -62,7 +62,7 @@ Describe "Duplicates" {
         $tempFolder = Join-Path $env:TEMP "MyBookDupesTest_$(Get-Random)"
         $null = New-Item -Path $tempFolder -ItemType Directory -Force
         try {
-            { Resolve-MyBookDuplicates -RootPath $tempFolder -DryRun } | Should Not Throw
+            { Resolve-MyBookDuplicates -RootPath $tempFolder -DryRun } | Should -Not -Throw
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -74,7 +74,7 @@ Describe "Cleanup" {
         $tempFolder = Join-Path $env:TEMP "MyBookCleanupTest_$(Get-Random)"
         $null = New-Item -Path $tempFolder -ItemType Directory -Force
         try {
-            { Invoke-MyBookCleanup -RootPath $tempFolder -RemoveEmptyDirectories } | Should Not Throw
+            { Invoke-MyBookCleanup -RootPath $tempFolder -RemoveEmptyDirectories } | Should -Not -Throw
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -83,7 +83,7 @@ Describe "Cleanup" {
 
 Describe "Maintenance Task" {
     It "can register maintenance task (no throw)" {
-        { Register-MyBookMaintenanceTask -TaskName 'MyBookTools_TestTask' -Schedule Daily } | Should Not Throw
+        { Register-MyBookMaintenanceTask -TaskName 'MyBookTools_TestTask' -Schedule Daily } | Should -Not -Throw
     }
 }
 
@@ -96,9 +96,9 @@ Describe "Scan Duration Prediction" {
 
         try {
             $prediction = Get-MyBookScanPrediction -RootPath $tempFolder
-            $prediction.EstimatedFileCount | Should Be 2
-            $prediction.IncludeHashes | Should Be $false
-            $prediction.TotalEstimatedDuration.TotalSeconds | Should BeGreaterThan 0
+            $prediction.EstimatedFileCount | Should -Be 2
+            $prediction.IncludeHashes | Should -Be $false
+            $prediction.TotalEstimatedDuration.TotalSeconds | Should -BeGreaterThan 0
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -111,16 +111,16 @@ Describe "Scan Duration Prediction" {
 
         try {
             $prediction = Get-MyBookScanPrediction -RootPath $tempFolder -IncludeHashes
-            $prediction.EstimatedFileCount | Should Be 1
-            $prediction.IncludeHashes | Should Be $true
-            $prediction.TotalEstimatedDuration.TotalSeconds | Should BeGreaterThan 0
+            $prediction.EstimatedFileCount | Should -Be 1
+            $prediction.IncludeHashes | Should -Be $true
+            $prediction.TotalEstimatedDuration.TotalSeconds | Should -BeGreaterThan 0
         } finally {
             Remove-Item -Path $tempFolder -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
     It "throws error on invalid path" {
-        { Get-MyBookScanPrediction -RootPath "C:\NonExistentFolder_$(Get-Random)" } | Should Throw
+        { Get-MyBookScanPrediction -RootPath "C:\NonExistentFolder_$(Get-Random)" } | Should -Throw
     }
 }
 
