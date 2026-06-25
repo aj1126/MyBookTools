@@ -20,7 +20,7 @@ jobs:
     - name: Bump Manifest Version and Push Tag
       shell: pwsh
       run: |
-        $manifestPath = "./src/MyBookTools.psd1"
+        $manifestPath = "./src/DriveTools.psd1"
         $content = Get-Content $manifestPath -Raw
         
         if ($content -match "ModuleVersion\s*=\s*'([^']+)'") {
@@ -59,7 +59,7 @@ jobs:
         
         # Check if manifest changed and commit it
         $status = git status --porcelain
-        if ($status -like "*src/MyBookTools.psd1*") {
+        if ($status -like "*src/DriveTools.psd1*") {
             git add $manifestPath
             git commit -m "chore: bump version to v$newVersion [skip ci]"
             git push origin main
