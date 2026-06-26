@@ -18,3 +18,6 @@ Thumbs.db
 
 # Pester test output
 TestResults/
+
+# Ignore packaged desktop builds
+packages/desktop/dist-packaged/
