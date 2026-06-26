@@ -1,70 +1,61 @@
-name: Semantic Versioning
-
-on:
-  push:
-    branches: [ main ]
-
-jobs:
-  version:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Bump Manifest Version and Push Tag
-      shell: pwsh
-      run: |
-        $manifestPath = "./src/DriveTools.psd1"
-        $content = Get-Content $manifestPath -Raw
-        
-        if ($content -match "ModuleVersion\s*=\s*'([^']+)'") {
-            $currentVersion = $Matches[1]
-        } else {
-            $currentVersion = "2.0.0"
-        }
-        
-        Write-Host "Current version in manifest: $currentVersion"
-        
-        $bump = "patch"
-        $commitMsg = git log -1 --pretty=%B
-        if ($commitMsg -like "*#major*" -or $commitMsg -like "*[major]*") {
-            $bump = "major"
-        } elseif ($commitMsg -like "*#minor*" -or $commitMsg -like "*[minor]*") {
-            $bump = "minor"
-        }
-        
-        $version = [version]$currentVersion
-        if ($bump -eq "major") {
-            $newVersion = [string](New-Object Version ($version.Major + 1), 0, 0)
-        } elseif ($bump -eq "minor") {
-            $newVersion = [string](New-Object Version $version.Major, ($version.Minor + 1), 0)
-        } else {
-            $newVersion = [string](New-Object Version $version.Major, $version.Minor, ($version.Build + 1))
-        }
-        
-        Write-Host "Bumping ($bump) to new version: $newVersion"
-        
-        $content = $content -replace "ModuleVersion\s*=\s*'[^']+'", "ModuleVersion = '$newVersion'"
-        Set-Content -Path $manifestPath -Value $content -Encoding UTF8
-        
-        # Git config
-        git config user.name "github-actions"
-        git config user.email "github-actions@github.com"
-        
-        # Check if manifest changed and commit it
-        $status = git status --porcelain
-        if ($status -like "*src/DriveTools.psd1*") {
-            git add $manifestPath
-            git commit -m "chore: bump version to v$newVersion [skip ci]"
-            git push origin main
-        }
-        
-        # Create and push tag
-        git tag "v$newVersion"
-        git push origin "v$newVersion"
+- name: Bump Manifest Version and Push Tag
+        shell: pwsh
+        run: |
+          $manifestPath = "./src/DriveTools.psd1"
+          $content = Get-Content $manifestPath -Raw
+          
+          if ($content -match "ModuleVersion\s*=\s*'([^']+)'") {
+              $currentVersion = $Matches[1]
+          } else {
+              $currentVersion = "2.0.0"
+          }
+          Write-Host "Current version in manifest: $currentVersion"
+          
+          # Determine the bump type based on commit message semantics
+          $bump = "patch"
+          $commitMsg = git log -1 --pretty=%B
+          if ($commitMsg -like "*#major*" -or $commitMsg -like "*[major]*" -or $commitMsg -like "*overhaul*") {
+              $bump = "major"
+          } elseif ($commitMsg -like "*#minor*" -or $commitMsg -like "*[minor]*" -or $commitMsg -like "*feature*" -or $commitMsg -like "*enhancement*") {
+              $bump = "minor"
+          }
+          
+          # Parse and increment explicitly
+          $version = [version]$currentVersion
+          $major = $version.Major
+          $minor = $version.Minor
+          $patch = $version.Build # .NET Version mapping: Major.Minor.Build.Revision
+          
+          if ($bump -eq "major") {
+              $major++
+              $minor = 0
+              $patch = 0
+          } elseif ($bump -eq "minor") {
+              $minor++
+              $patch = 0
+          } else {
+              $patch++
+          }
+          
+          $newVersion = "$major.$minor.$patch"
+          Write-Host "Bumping ($bump) to new version: $newVersion"
+          
+          # Update the manifest string non-destructively
+          $content = $content -replace "ModuleVersion\s*=\s*'[^']+'", "ModuleVersion = '$newVersion'"
+          Set-Content -Path $manifestPath -Value $content -Encoding UTF8
+          
+          # Git config
+          git config user.name "github-actions"
+          git config user.email "ajjukes1126@gmail.com"
+          
+          # Check if manifest changed and commit it
+          $status = git status --porcelain
+          if ($status -like "*src/DriveTools.psd1*") {
+              git add $manifestPath
+              git commit -m "chore: bump version to v$newVersion [skip ci]"
+              git push origin main
+          }
+          
+          # Create and push tag
+          git tag "v$newVersion"
+          git push origin "v$newVersion"
