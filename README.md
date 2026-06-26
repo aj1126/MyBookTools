@@ -1,116 +1,265 @@
-# 🚀 Unified PowerShell Profile Framework
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/AJ1126/DriveTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/actions/workflow/status/AJ1126/MyBookTools/ci.yml?style=for-the-badge" />
+  <img src="https://img.shields.io/powershellgallery/v/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/license/AJ1126/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/issues/AJ1126/MyBookTools?style=for-the-badge" />
+  <img src="https://img.shields.io/github/stars/AJ1126/MyBookTools?style=for-the-badge" />
+</p>
 
-A high-performance, metadata-driven, and context-aware PowerShell profile deployment framework designed to unify shell configurations across Windows PowerShell (5.1) and PowerShell Core (7+). This framework transitions your shell startup from simple alphabetical execution into a robust, dependency-sorted, parallel-loading ecosystem.
+# 📦 MyBookTools
+
+> A PowerShell module for auditing, organizing, deduplicating, and maintaining large external drives (3 TB+).
+
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue?logo=powershell)](https://github.com/PowerShell/PowerShell)
+[![Pester](https://img.shields.io/badge/Tested%20with-Pester%205-green)](https://pester.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## ✨ Features
 
-* 
-**Metadata-Driven Topological Sorting:** Scripts parse explicit header comments (such as `#requires -Module`, `#depends:`, and `#group:`) to dynamically compute a dependency tree and sort execution, entirely eliminating initialization order issues and broken reference errors.
-
-
-* 
-**Context-Aware Profile Modes:** The loader samples your active execution context to dynamically scale loaded configuration groups, ensuring startup remains tight, lightweight, and secure:
-
-
-* 
-`minimal` (Remote SSH/Sessions): Loads exclusively the core group, omitting all aesthetic or optional components.
-
-
-* 
-`safe` (Elevated Local Admin): Omits developmental and external tools to enforce restrictive, risk-free loading boundaries.
-
-
-* 
-`dev` (Integrated VS Code Terminal): Prioritizes testing environments, debugging utilities, and localized logging pipelines.
-
-
-* 
-`full` (Standard/Windows Terminal): Aggregates the complete environment suite (core, dev, ui, tools, and admin configurations).
-
-
-
-
-* 
-**Hybrid Parallel Loading (PowerShell 7+):** On modern runtimes, independent and decoupled configuration blocks execute asynchronously using `ForEach-Object -Parallel`, compressing shell bootstrap latency to hardware limits while dependent modules are staged sequentially.
-
-
-* 
-**Resilient Try/Catch Architecture & Diagnostic Logging:** Every module interaction is wrapped in localized error containment blocks. Any script exceptions are caught safely and directed to `profile_loader.log` with target line parameters and failure vectors, letting the rest of your shell initialize unhindered.
-
-
-* 
-**Interactive Runtime Toolkit:** Injects full diagnostic capabilities directly into your live terminal session to inspect, hot-reload, and benchmark your environment.
-
-
+| Feature | Description |
+|---|---|
+| **Fast Audit** | Recursively scans a drive and exports file metadata to CSV |
+| **Hash Caching** | Stores SHA256 hashes in a JSON cache; only rehashes files that have changed |
+| **Auto-Categorization** | Moves files into `Projects / Media / Archives / Uploads / System` folders based on extension and keyword patterns |
+| **Duplicate Resolution** | Detects exact duplicates via hash; keeps the newest copy and removes the rest |
+| **Cleanup** | Removes empty directories, reports duplicate groups, compresses the Archives folder |
+| **Visual Tree Map** | Generates a Unicode tree of the drive saved to a `.txt` file |
+| **Real-Time Status** | `Get-MyBookStatus` returns the currently running operation, start time, and details |
+| **Scheduled Maintenance** | Registers a Windows Scheduled Task to run audits automatically (Daily or Hourly) |
+| **WPF GUI** | Optional graphical launcher for all operations — no command line required |
 
 ---
 
-## 🗂️ Repository Structure
+## 🗂️ Repository Layout
 
-```text
-Documents/
-├── PowerShell/                               # Main PowerShell (Core) workspace (Git repo)
-│   ├── Microsoft.PowerShell_profile.ps1      # Entry profile script (Core)
-│   ├── powershell.config.json                # Global engine behaviors & engine adjustments
-│   ├── profile_loader.log                    # Diagnostic append-log mapping framework metrics
-│   ├── profile.d/                            # Unified configuration modules
-│   │   ├── 00-Environment.ps1                # Global variable constants & system paths
-│   │   ├── 00-F7History.ps1                  # Command pop-up legacy menu engine provider
-│   │   ├── 00-Loader.ps1                     # Version dispatcher / entry bootstrap stage
-│   │   ├── 00-uvx.ps1                        # uv automated Python package manager integration
-│   │   ├── 01-PredictiveText.ps1             # PSReadLine history & inline grey-text engine tuning
-│   │   ├── 05-powertoys.ps1                  # PowerToys cross-utility shell hooks
-│   │   ├── 10-Functions.ps1                  # Production custom utilities
-│   │   ├── 20-Aliases.ps1                    # Accelerated prompt commands
-│   │   ├── 90-local.ps1                      # Machine-specific non-tracked configurations
-│   │   ├── loader-pwsh.ps1                   # PS7+ multi-threaded topological loading engine
-│   │   ├── loader-windowsps.ps1              # PS5.1 backward-compatible topological stage
-│   │   └── profile-runtime.ps1               # Shared diagnostic tools & interactive TUI engine
-│   ├── Scripts/                              # Automated infrastructure and maintenance
-│   │   ├── helpers/                          # Framework correction utilities (fix-loader, test-profiles)
-│   │   └── Installers/                       # Package verification and installation assets
-│   ├── Modules/                              # Cross-shell mirrored repository module pathing
-│   └── Backups/                              # Automated archival snapshots of active states
-└── WindowsPowerShell/                        # Windows PowerShell workspace
-    └── Microsoft.PowerShell_profile.ps1      # Identical mirrored router entry script (v5.1)
-
+```
+MyBookTools/
+├── 2.0/
+│   ├── MyBookTools.psm1        # Module implementation
+│   ├── MyBookTools.psd1        # Module manifest
+├── tests/
+│   └── MyBookTools.Tests.ps1   # Pester test suite
+├── tools/
+│   ├── MyBookTools.GUI.ps1     # WPF graphical launcher
+│   └── Invoke-MyBookBenchmark.ps1  # Performance benchmark script
+├── profile-snippet.ps1         # PowerShell profile snippet
+└── README.md
 ```
 
 ---
 
-## 🛠️ Interactive Runtime Toolkit (`profile-runtime.ps1`)
+## ⚡ Installation
 
-The framework exposes a specialized suite of utility commands to monitor and maintain your environment's performance straight from the prompt:
+### Option A — Manual (recommended for personal use)
 
-* 
-`Show-ProfileStartupSummary`: Displays a formatted table of all loaded profile elements, sorted from slowest to fastest, to pinpoint bottleneck scripts instantly.
+```powershell
+$dest = "$env:USERPROFILE\Documents\WindowsPowerShell\Modules\MyBookTools\2.0"
+New-Item -Path $dest -ItemType Directory -Force
+Copy-Item MyBookTools.psm1, MyBookTools.psd1 -Destination $dest
+```
 
+### Option B — Clone and install
 
-* 
-`Reload-ProfileModule -Name <string>`: Hot-reloads an active script module directly into your live session without needing to open a new terminal window.
+```powershell
+git clone https://github.com/you/MyBookTools.git
+Set-Location MyBookTools
+.\Install.ps1   # copies module to the user module path
+```
 
+### Verify installation
 
-* 
-`Measure-ProfileModule -Name <string> -Iterations <int>`: Isolates a target configuration script and benchmarks its loading speed across multiple execution passes to trace its performance impact.
-
-
-* 
-`Build-ProfileModuleCache` / `Invoke-CachedProfileModule`: Compiles runtime configuration scripts down into high-speed ScriptBlocks stored in memory, bypassing slow disk I/O file lookups entirely.
-
-
-* 
-`Export-VSCodeDependencyGraphFiles`: Generates structured `.json` and Graphviz `.dot` files to let you easily model and visualize your profile configuration dependencies.
-
-
-* 
-`Show-ProfileManager`: Launches a terminal-based interactive Text User Interface (TUI) to inspect, measure, cache, and hot-reload configurations on the fly.
-
-
+```powershell
+Import-Module MyBookTools
+Get-Module MyBookTools | Select-Object Name, Version, ExportedFunctions
+```
 
 ---
 
-## 🛡️ Maintenance & Backups
+## 🚀 Quick Start
 
-A quick-access fallback alias `rh` (`Run-Helper`) is available to handle routine framework maintenance tasks automatically under the hood. Before applying any potentially destructive or structural modifications to your live environment, helper utilities capture state backups securely under `Backups/` (or adjacent file markers) to prevent configuration loss.
+```powershell
+Import-Module MyBookTools
+
+# 1. Audit the drive
+$csv = Invoke-MyBookAuditFast -RootPath M:\ -IncludeHashes
+Write-Host "Report saved to $csv"
+
+# 2. Preview categorization without moving anything
+Invoke-MyBookCategorize -DryRun
+
+# 3. Apply categorization
+Invoke-MyBookCategorize
+
+# 4. Find and remove duplicates (dry-run first!)
+Resolve-MyBookDuplicates -DryRun
+Resolve-MyBookDuplicates
+
+# 5. Clean up empty folders
+Invoke-MyBookCleanup -RemoveEmptyDirectories -ReportDuplicates
+
+# 6. View a tree map of the drive
+Show-MyBookVisualMap -MaxDepth 3
+
+# 7. Schedule nightly maintenance
+Register-MyBookMaintenanceTask -Schedule Daily
+
+# 8. Monitor long-running operations
+Get-MyBookStatus
+```
+
+---
+
+## 📋 Command Reference
+
+### `Invoke-MyBookAuditFast`
+
+Scans a drive and exports a CSV with file metadata.
+
+```
+-RootPath        <string>   Drive or folder to scan          (default: M:\)
+-OutputCsvPath   <string>   Destination CSV path
+-IncludeHashes   <switch>   Compute SHA256 for every file
+```
+
+### `Update-MyBookHashCache`
+
+Builds or refreshes a JSON hash cache; unchanged files reuse their stored hash.
+
+```
+-RootPath   <string>   Drive root
+-CachePath  <string>   Path to HashCache.json
+```
+
+### `Invoke-MyBookCategorize`
+
+Moves files into category folders based on extension and keyword matching.
+
+```
+-RootPath                  <string>    Drive root
+-CategoryMap               <hashtable> Custom map (category → pattern list)
+-DisableDefaultCategoryMap <switch>    Skip the built-in category map
+-DryRun                    <switch>    Log actions without moving files
+```
+
+**Default CategoryMap:**
+
+| Category | Triggers |
+|---|---|
+| Projects | `Unity`, `Project`, `Source`, `.sln`, `.csproj`, `Perseus` |
+| Media | `.wav`, `.mp3`, `.flac`, `.mp4`, `.mov`, `.mkv`, `.jpg`, `.png`, `.psd`, `.ai` … |
+| Archives | `backup`, `export`, `.zip`, `.rar`, `.7z`, `.bak` … |
+| Uploads | `UPLOADS`, `upload`, `.torrent`, `.nfo` |
+| System | `installer`, `setup`, `.msi`, `.exe`, `.dll`, `.log` |
+
+### `Resolve-MyBookDuplicates`
+
+Hashes all files, groups identical hashes, keeps the newest copy.
+
+```
+-RootPath  <string>  Drive root
+-DryRun    <switch>  Log what would be deleted without deleting
+```
+
+### `Invoke-MyBookCleanup`
+
+Composite cleanup: empty directories, duplicate reports, archive compression.
+
+```
+-RemoveEmptyDirectories  <switch>  Delete zero-item folders
+-ReportDuplicates        <switch>  Log duplicate groups to the log file
+-CompressArchives        <switch>  Zip the Archives\ subfolder
+```
+
+### `Show-MyBookVisualMap`
+
+Renders a Unicode tree of the directory structure.
+
+```
+-RootPath    <string>  Root to map
+-MaxDepth    <int>     Recursion limit (default: 3)
+-OutputPath  <string>  Where to save the .txt file
+```
+
+### `Register-MyBookMaintenanceTask`
+
+Registers a Windows Scheduled Task that calls `Invoke-MyBookAuditFast` automatically.
+
+```
+-TaskName  <string>  Task name (default: MyBookMaintenance)
+-Schedule  <string>  Daily | Hourly
+```
+
+### `Get-MyBookStatus`
+
+Returns the currently active operation, start time, and last-update timestamp.
+
+---
+
+## 📁 Log Files
+
+All operations write to daily log files:
+
+```
+%USERPROFILE%\Documents\MyBookLogs\MyBook_YYYY-MM-DD.log
+```
+
+Hash cache is stored at:
+
+```
+%USERPROFILE%\Documents\MyBookLogs\MyBook_HashCache.json
+```
+
+---
+
+## 🧪 Running Tests
+
+Requires [Pester 5](https://pester.dev/docs/introduction/installation).
+
+```powershell
+Install-Module Pester -Force -SkipPublisherCheck
+Invoke-Pester .\tests\MyBookTools.Tests.ps1 -Output Detailed
+```
+
+---
+
+## 🖥️ WPF GUI
+
+Launch the graphical interface with:
+
+```powershell
+.\tools\MyBookTools.GUI.ps1
+```
+
+The GUI provides one-click access to all operations, a live status display, and a log viewer.
+
+---
+
+## ⚙️ Configuration
+
+You can override the default drive root and log path in your profile or before importing the module by editing the module variables after import:
+
+```powershell
+Import-Module MyBookTools
+# Point to a different drive
+(Get-Module MyBookTools).Invoke({ $Script:MyBook_DefaultRoot = 'E:\' })
+```
+
+Or supply `-RootPath` on every call.
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Add Pester tests for any new functions
+4. Open a pull request
+
+---
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
