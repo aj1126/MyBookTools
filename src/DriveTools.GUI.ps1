@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     DriveTools WPF GUI — graphical launcher for all DriveTools operations.
@@ -211,7 +211,7 @@ $chkDupeRpt   = $window.FindName('ChkDupeRpt')
 $comboDrives  = $window.FindName('ComboDrives')
 
 # ── Populate drives list ──────────────────────────────────────────────────────
-$drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady -and $_.DriveType -in 'Fixed','Removable' }
+$drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady }
 foreach ($d in $drives) {
     $freeGB = [math]::Round($d.AvailableFreeSpace / 1GB, 1)
     $totalGB = [math]::Round($d.TotalSize / 1GB, 1)
