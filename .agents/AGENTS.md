@@ -72,3 +72,14 @@
 
 ## 11. Early Validation of Test Paths
 - **Fail Fast on Invalid Input**: Functions that support interactive fallback selection menus (like `Read-Host` drive selection) must validate input path parameters first. If an invalid or non-existent path is passed, throw an error immediately instead of falling back to the interactive menu, preventing automated tests from hanging indefinitely.
+
+## 12. Dynamic Pester Version Selection in Helper Scripts
+- **Avoid Version Conflicts**: When writing script-based test runners or pre-publish verifiers that rely on legacy Pester v3/v4 syntax, do not call `Invoke-Pester` directly without ensuring the correct Pester version is loaded. Query and import Pester v3 explicitly first to prevent Pester 5+ syntax compatibility errors:
+  ```powershell
+  $pester3 = Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version.Major -eq 3 } | Select-Object -First 1
+  if ($pester3) {
+      Import-Module Pester -RequiredVersion $pester3.Version -Force -ErrorAction SilentlyContinue
+  } else {
+      Import-Module Pester -Force -ErrorAction SilentlyContinue
+  }
+  ```
