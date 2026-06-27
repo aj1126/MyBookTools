@@ -48,3 +48,7 @@
       # Ignore removal errors if status file is already deleted or locked by another process.
   }
   ```
+
+## 8. Artifact and Workspace File Operations
+- **Artifact Directory Bounds**: Always write user-facing reports, plan documents, and walk-throughs in the designated conversation brain directory `C:\Users\ajjuk\.gemini\antigravity\brain\<conversation-id>/` and provide `ArtifactMetadata`.
+- **Workspace Files**: Never provide `ArtifactMetadata` when creating or modifying files inside the user's workspace directory (e.g. source files, `.vscode/settings.json`, `.cursorrules`).

@@ -43,9 +43,9 @@ function Get-DriveToolsRootPath {
         return $Path
     }
 
-    $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady -and $_.DriveType -in 'Fixed','Removable' }
+    $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady }
     if ($drives.Count -eq 0) {
-        throw "No ready fixed or removable drives found."
+        throw "No ready drives found."
     }
 
     # If non-interactive or running in automated tests
