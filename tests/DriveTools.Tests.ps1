@@ -5,6 +5,8 @@
 .DESCRIPTION
     Executes structural unit tests, type validation checks, mock safety verification,
     and state serialization path analysis in an isolated ephemeral sandbox environment.
+.NOTES
+    Optimized for Pester v5+ and Windows PowerShell 5.1 runtime parameters.
 #>
 
 $ModuleRoot = Join-Path $PSScriptRoot "..\src\DriveTools.psm1"
@@ -18,12 +20,12 @@ Describe "DriveTools Core Architecture Test Suite" {
         if (Test-Path $ModuleRoot) {
             Import-Module $ModuleRoot -Force
         } else {
-            Assert-Mock -Message "Module root file not resolved at: $ModuleRoot"
-            return
+            throw "Critical Setup Fault: Module root script file could not be resolved at target destination: $ModuleRoot"
         }
 
-        # Redirect the global logging and status directory to a safe temporary path
-        $Script:TestLogDir = Join-Path [System.IO.Path]::GetTempPath() "DriveTools_TestSandbox_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+        # Parenthesize static method call to resolve the PowerShell 5.1 parameter parsing constraint
+        $TemporaryTempPath = [System.IO.Path]::GetTempPath()
+        $Script:TestLogDir = Join-Path $TemporaryTempPath "DriveTools_TestSandbox_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         New-Item -Path $Script:TestLogDir -ItemType Directory -Force | Out-Null
 
         # Backup original module tracking root and overwrite with sandbox anchor
@@ -52,22 +54,22 @@ Describe "DriveTools Core Architecture Test Suite" {
         
         It "Should have compiled and registered the DriveTools.Core.AuditEngine type" {
             $Type = [System.Management.Automation.PSTypeName]'DriveTools.Core.AuditEngine'
-            $Type.Type.ShouldNotBeNullOrEmpty()
+            $Type.Type | Should -Not -BeNullOrEmpty
         }
 
         It "Should have compiled and registered the DriveTools.Core.StorageProfiler type" {
             $Type = [System.Management.Automation.PSTypeName]'DriveTools.Core.StorageProfiler'
-            $Type.Type.ShouldNotBeNullOrEmpty()
+            $Type.Type | Should -Not -BeNullOrEmpty
         }
 
         It "Should successfully instantiate the AuditEngine class with safe bounded structures" {
             $MockLog = Join-Path $Script:TestLogDir "engine_init_test.csv"
             $Engine = [DriveTools.Core.AuditEngine]::new(5000, $MockLog)
             
-            $Engine.ShouldNotBeNullOrEmpty()
+            $Engine | Should -Not -BeNullOrEmpty
             $Engine.ProcessedCount | Should -Be 0
             $Engine.ErrorCount | Should -Be 0
-            $Engine.FileQueue | ShouldNot -BeNullOrEmpty
+            $Engine.FileQueue | Should -Not -BeNullOrEmpty
         }
     }
 
@@ -152,20 +154,19 @@ Describe "DriveTools Core Architecture Test Suite" {
     Context "Robust Defensive Exception Boundary Handling" {
         
         It "Should gracefully handle UnauthorizedAccessException or deep folder access errors" {
-            # Running visual map on a shallow depth should execute cleanly without halting on protected folders
-            { Show-DriveVisualMap -RootPath "C:\" -MaxDepth 1 -OutputPath (Join-Path $Script:TestLogDir "vmap.txt") } | ShouldNot -Throw
+            # Standardized Poster v5 block check verification ensures pipeline errors don't collapse tests
+            { Show-DriveVisualMap -RootPath "C:\" -MaxDepth 1 -OutputPath (Join-Path $Script:TestLogDir "vmap.txt") } | Should -Not -Throw
         }
 
-        It "Should break cleanly with a descriptive fatal exception if an un-hydrated cache database is queried for dedup" {
+        It "Should break cleanly with a descriptive log entry if an un-hydrated cache database is queried for dedup" {
             $EmptySandbox = Join-Path $Script:TestLogDir "empty_sandbox"
             New-Item -Path $EmptySandbox -ItemType Directory -Force | Out-Null
             
             $MissingCacheDb = Join-Path $Script:TestLogDir "non_existent_cache_index.db"
             
-            # Mock original tracking configurations to use a broken DB target file
+            # Temporarily point log directory to a custom subfolder path context
             $Script:DriveTools_DefaultLogRoot = Join-Path $Script:TestLogDir "broken_scope_path"
             
-            # Assert that the logic registers the missing database file dependency safely
             $LogFileDate = Get-Date -Format 'yyyy-MM-dd'
             $CurrentLogFile = Join-Path $Script:OrigLogRoot "DriveTools_${LogFileDate}.log"
             $InitialLineCount = if (Test-Path $CurrentLogFile) { (Get-Content $CurrentLogFile).Count } else { 0 }
