@@ -6,45 +6,47 @@
     Executes structural unit tests, type validation checks, mock safety verification,
     and state serialization path analysis in an isolated ephemeral sandbox environment.
 .NOTES
-    Optimized for Pester v5+ and Windows PowerShell 5.1 runtime parameters.
+    Optimized for Pester v5.7+ and Windows PowerShell 5.1 execution constraints.
 #>
-
-$ModuleRoot = Join-Path $PSScriptRoot "..\src\DriveTools.psm1"
 
 Describe "DriveTools Core Architecture Test Suite" {
     
     BeforeAll {
         Write-Host "[Test Setup] Initializing virtual sandbox environment..." -ForegroundColor Cyan
         
-        # Force import of the verified module framework
-        if (Test-Path $ModuleRoot) {
-            Import-Module $ModuleRoot -Force
+        # 1. Initialize ModuleRoot inside BeforeAll to capture correct Run Phase variables
+        $Script:ModuleRoot = Join-Path $PSScriptRoot "..\src\DriveTools.psm1"
+        
+        if (-not [string]::IsNullOrEmpty($Script:ModuleRoot) -and (Test-Path $Script:ModuleRoot)) {
+            Import-Module $Script:ModuleRoot -Force
         } else {
-            throw "Critical Setup Fault: Module root script file could not be resolved at target destination: $ModuleRoot"
+            throw "Critical Setup Fault: Module root script file could not be resolved at target destination: $Script:ModuleRoot"
         }
 
-        # Parenthesize static method call to resolve the PowerShell 5.1 parameter parsing constraint
+        # 2. Allocate a safe temporary virtual folder path for sandbox runs
         $TemporaryTempPath = [System.IO.Path]::GetTempPath()
         $Script:TestLogDir = Join-Path $TemporaryTempPath "DriveTools_TestSandbox_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
         New-Item -Path $Script:TestLogDir -ItemType Directory -Force | Out-Null
 
-        # Backup original module tracking root and overwrite with sandbox anchor
-        $Script:OrigLogRoot = $Script:DriveTools_DefaultLogRoot
-        $Script:DriveTools_DefaultLogRoot = $Script:TestLogDir
+        # 3. Inject variables directly into the module's internal state via its session state pool
+        $Script:OrigLogRoot = & (Get-Module DriveTools) { $Script:DriveTools_DefaultLogRoot }
+        & (Get-Module DriveTools) { param($SandboxPath) $Script:DriveTools_DefaultLogRoot = $SandboxPath } $Script:TestLogDir
     }
 
     AfterAll {
         Write-Host "[Test Teardown] Tearing down virtual sandbox environment..." -ForegroundColor Cyan
         
-        # Restore module tracking roots
-        $Script:DriveTools_DefaultLogRoot = $Script:OrigLogRoot
+        # 1. Restore the production module's tracking roots if they were altered
+        if (Get-Module DriveTools -ErrorAction SilentlyContinue) {
+            & (Get-Module DriveTools) { param($OriginalPath) $Script:DriveTools_DefaultLogRoot = $OriginalPath } $Script:OrigLogRoot
+        }
 
-        # Safely remove testing directory assets
-        if (Test-Path $Script:TestLogDir) {
+        # 2. Defensively check strings before calling Test-Path to protect against cascade crashes
+        if (-not [string]::IsNullOrEmpty($Script:TestLogDir) -and (Test-Path $Script:TestLogDir)) {
             Remove-Item -Path $Script:TestLogDir -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        # Force garbage collection recycling to release open database file handles
+        # 3. Recycle file handles immediately to clear lock contention on database resources
         [System.GC]::Collect()
         [System.GC]::WaitForPendingFinalizers()
     }
@@ -80,8 +82,9 @@ Describe "DriveTools Core Architecture Test Suite" {
             $TestMessage = "Automated testing transaction token trace entry."
             Write-DriveToolsLog -Message $TestMessage -Level "Info"
             
+            $ActualLogRoot = & (Get-Module DriveTools) { $Script:DriveTools_DefaultLogRoot }
             $FileDate = Get-Date -Format 'yyyy-MM-dd'
-            $ExpectedLogFile = Join-Path $Script:TestLogDir "DriveTools_${FileDate}.log"
+            $ExpectedLogFile = Join-Path $ActualLogRoot "DriveTools_${FileDate}.log"
             
             Test-Path $ExpectedLogFile | Should -Be $true
             $Content = Get-Content -Path $ExpectedLogFile -Raw
@@ -92,7 +95,8 @@ Describe "DriveTools Core Architecture Test Suite" {
             Clear-DriveToolsStatus
             Set-DriveToolsStatus -Operation "UnitTesting" -Details "Verifying serialization parameters"
             
-            $ExpectedStatusFile = Join-Path $Script:TestLogDir "DriveTools_Status.json"
+            $ActualLogRoot = & (Get-Module DriveTools) { $Script:DriveTools_DefaultLogRoot }
+            $ExpectedStatusFile = Join-Path $ActualLogRoot "DriveTools_Status.json"
             Test-Path $ExpectedStatusFile | Should -Be $true
             
             $StatusObject = Get-DriveToolsStatus
@@ -104,7 +108,8 @@ Describe "DriveTools Core Architecture Test Suite" {
             Set-DriveToolsStatus -Operation "PurgeTest" -Details "Pending erasure"
             Clear-DriveToolsStatus
             
-            $ExpectedStatusFile = Join-Path $Script:TestLogDir "DriveTools_Status.json"
+            $ActualLogRoot = & (Get-Module DriveTools) { $Script:DriveTools_DefaultLogRoot }
+            $ExpectedStatusFile = Join-Path $ActualLogRoot "DriveTools_Status.json"
             Test-Path $ExpectedStatusFile | Should -Be $false
             
             $StatusObject = Get-DriveToolsStatus
@@ -142,7 +147,6 @@ Describe "DriveTools Core Architecture Test Suite" {
             $TargetFile = Join-Path $TestSandboxFolder "test_unity_asset.unity"
             Set-Content -Path $TargetFile -Value "Fake binary assets signature data payload block."
             
-            # Executing live categorized DryRun should never move files or allocate physical subfolders
             Invoke-DriveCategorize -RootPath $TestSandboxFolder -DryRun
             
             Test-Path $TargetFile | Should -Be $true
@@ -154,7 +158,7 @@ Describe "DriveTools Core Architecture Test Suite" {
     Context "Robust Defensive Exception Boundary Handling" {
         
         It "Should gracefully handle UnauthorizedAccessException or deep folder access errors" {
-            # Standardized Poster v5 block check verification ensures pipeline errors don't collapse tests
+            # Standardized Pester v5 script block format constraints
             { Show-DriveVisualMap -RootPath "C:\" -MaxDepth 1 -OutputPath (Join-Path $Script:TestLogDir "vmap.txt") } | Should -Not -Throw
         }
 
@@ -162,13 +166,14 @@ Describe "DriveTools Core Architecture Test Suite" {
             $EmptySandbox = Join-Path $Script:TestLogDir "empty_sandbox"
             New-Item -Path $EmptySandbox -ItemType Directory -Force | Out-Null
             
-            $MissingCacheDb = Join-Path $Script:TestLogDir "non_existent_cache_index.db"
+            $BrokenScopePath = Join-Path $Script:TestLogDir "broken_scope_path"
+            New-Item -Path $BrokenScopePath -ItemType Directory -Force | Out-Null
             
-            # Temporarily point log directory to a custom subfolder path context
-            $Script:DriveTools_DefaultLogRoot = Join-Path $Script:TestLogDir "broken_scope_path"
+            # Switch module log state targets to force a file mismatch exception trigger point
+            & (Get-Module DriveTools) { param($BrokenPath) $Script:DriveTools_DefaultLogRoot = $BrokenPath } $BrokenScopePath
             
             $LogFileDate = Get-Date -Format 'yyyy-MM-dd'
-            $CurrentLogFile = Join-Path $Script:OrigLogRoot "DriveTools_${LogFileDate}.log"
+            $CurrentLogFile = Join-Path $BrokenScopePath "DriveTools_${LogFileDate}.log"
             $InitialLineCount = if (Test-Path $CurrentLogFile) { (Get-Content $CurrentLogFile).Count } else { 0 }
             
             Resolve-DriveDuplicates -RootPath $EmptySandbox -DryRun
