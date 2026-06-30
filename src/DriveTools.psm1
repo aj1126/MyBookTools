@@ -4,7 +4,8 @@
     DriveTools — Complete drive auditing, categorization, refinement, and maintenance toolkit.
 .DESCRIPTION
     Refactored to support any storage drive on the system using an optimized SQLite database index,
-    memory-safe queue directory traversal, and ultra-high-speed WizTree MFT-level metadata ingestion.
+    memory-safe queue directory traversal, ultra-high-speed WizTree MFT ingestion, and comprehensive
+    high-performance progress telemetry visualization.
 #>
 
 # =====================================================================
@@ -246,6 +247,7 @@ function Show-DriveVisualMap {
 }
 
 function Update-DriveHashCache {
+    [CmdletBinding()]
     param(
         [string]$RootPath,
         [string]$CachePath,
@@ -267,7 +269,6 @@ function Update-DriveHashCache {
     Set-DriveToolsStatus -Operation "HashCache" -Details "Updating transactional SQLite cache database"
     Import-SQLiteDependency
 
-    # Pooling=False prevents unmanaged thread resource pooling from latching file locks
     $connectionString = "Data Source=$CachePath;Version=3;Pooling=False;"
     $conn = New-Object System.Data.SQLite.SQLiteConnection($connectionString)
     
@@ -306,6 +307,8 @@ function Update-DriveHashCache {
         $pInsTime = $insertCmd.Parameters.Add("@LastWriteTime", [System.Data.DbType]::String)
         $pInsHash = $insertCmd.Parameters.Add("@Hash", [System.Data.DbType]::String)
 
+        $totalProcessed = 0
+
         if ($UseWizTree) {
             if (-not (Test-Path $WizTreePath)) {
                 throw "WizTree executable mapping target reference not found at: $WizTreePath"
@@ -319,11 +322,13 @@ function Update-DriveHashCache {
                 "/exportdrivecapacity=0"
             )
             
+            Write-Verbose "[WizTree] Launching direct MFT binary database export to temporary mirror file..."
             $WizProcess = Start-Process -FilePath $WizTreePath -ArgumentList $procArgs -Wait -NoNewWindow -PassThru
             if ($WizProcess.ExitCode -ne 0) {
                 Write-DriveToolsLog -Message "WizTree exited with warning anomalies. Confirm shell elevation constraints." -Level "Warning"
             }
 
+            Write-Verbose "[WizTree] MFT Dump complete. Parsing raw CSV node stream tokens..."
             Add-Type -AssemblyName "Microsoft.VisualBasic"
             $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser($TempCsv)
             $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
@@ -351,6 +356,14 @@ function Update-DriveHashCache {
                     $lastWrite = $parsedDate.ToString('o')
                 }
 
+                $totalProcessed++
+                # UI Telemetry Modulation: Update progress every 5000 file node records
+                if ($totalProcessed % 5000 -eq 0) {
+                    $progressArgs = @('Update-DriveHashCache (WizTree Engine)', "Processed nodes count: $totalProcessed", $totalProcessed)
+                    Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 1
+                    Write-Verbose ("{0} nodes processed into transactional database cache..." -f $totalProcessed)
+                }
+
                 $hash = $null
                 $pCheckName.Value = $filePath
                 
@@ -372,7 +385,6 @@ function Update-DriveHashCache {
 
                 if (-not $cacheHit) {
                     try {
-                        # -ErrorAction SilentlyContinue permanently suppresses raw NTFS kernel-protected read alerts
                         $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
                     } catch {
                         # PSAvoidEmptyCatchBlock explanation: Suppress read locked operational nodes safely
@@ -418,6 +430,13 @@ function Update-DriveHashCache {
                         $length   = $fileInfo.Length
                         $lastWrite = $fileInfo.LastWriteTime.ToString('o')
                         $hash     = $null
+
+                        $totalProcessed++
+                        if ($totalProcessed % 5000 -eq 0) {
+                            $progressArgs = @('Update-DriveHashCache (Queue Engine)', "Traversing directory trees: $totalProcessed items evaluated", $totalProcessed)
+                            Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 1
+                            Write-Verbose ("{0} sequential nodes traversed and cached..." -f $totalProcessed)
+                        }
 
                         $pCheckName.Value = $filePath
                         
@@ -477,6 +496,7 @@ function Update-DriveHashCache {
         [System.GC]::Collect()
         [System.GC]::WaitForPendingFinalizers()
         
+        Write-Progress -Activity 'Update-DriveHashCache' -Completed -Id 1
         Clear-DriveToolsStatus
     }
 
@@ -484,6 +504,7 @@ function Update-DriveHashCache {
 }
 
 function Invoke-DriveAuditFast {
+    [CmdletBinding()]
     param(
         [string]$RootPath,
         [string]$OutputCsvPath,
@@ -507,6 +528,7 @@ function Invoke-DriveAuditFast {
     '"FullName","Length","Extension","LastWriteTime","Hash"' | Set-Content -Path $OutputCsvPath -Encoding UTF8
 
     $writer = $null
+    $totalProcessed = 0
     try {
         $writer = [System.IO.StreamWriter]::new($OutputCsvPath, $true, [System.Text.Encoding]::UTF8)
 
@@ -523,6 +545,7 @@ function Invoke-DriveAuditFast {
                 "/exportdrivecapacity=0"
             )
             
+            Write-Verbose "[WizTree] Launching direct MFT dump stream parsing..."
             [void](Start-Process -FilePath $WizTreePath -ArgumentList $procArgs -Wait -NoNewWindow)
 
             Add-Type -AssemblyName "Microsoft.VisualBasic"
@@ -550,6 +573,13 @@ function Invoke-DriveAuditFast {
                 $time = $dateStr
                 if ([DateTime]::TryParse($dateStr, [ref]$parsedDate)) {
                     $time = $parsedDate.ToString('o')
+                }
+
+                $totalProcessed++
+                if ($totalProcessed % 5000 -eq 0) {
+                    $progressArgs = @('Invoke-DriveAuditFast (WizTree Engine)', "Audited records count: $totalProcessed", $totalProcessed)
+                    Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 2
+                    Write-Verbose ("{0} file records written to CSV archive target..." -f $totalProcessed)
                 }
 
                 $hash = $null
@@ -602,6 +632,13 @@ function Invoke-DriveAuditFast {
                             }
                         }
                         
+                        $totalProcessed++
+                        if ($totalProcessed % 5000 -eq 0) {
+                            $progressArgs = @('Invoke-DriveAuditFast (Queue Engine)', "Audited rows count: $totalProcessed", $totalProcessed)
+                            Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 2
+                            Write-Verbose ("{0} active nodes written to flat audit index table..." -f $totalProcessed)
+                        }
+
                         $escapedPath = $filePath -replace '"', '""'
                         $ext = $fileInfo.Extension
                         $len = $fileInfo.Length
@@ -618,6 +655,7 @@ function Invoke-DriveAuditFast {
         }
     } finally {
         if ($null -ne $writer) { $writer.Close(); $writer.Dispose() }
+        Write-Progress -Activity 'Invoke-DriveAuditFast' -Completed -Id 2
         Clear-DriveToolsStatus
     }
     
