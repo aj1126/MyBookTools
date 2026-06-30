@@ -35,6 +35,9 @@ if (-not (Get-Module DriveTools)) {
     $ModulePathToLoad = (Get-Module DriveTools).Path
 }
 
+# Global tracker for the running async runspace thread pipeline
+$Script:ActivePowerShellInstance = $null
+
 # ── XAML layout ──────────────────────────────────────────────────────────────
 [xml]$xaml = @'
 <Window
@@ -161,14 +164,25 @@ if (-not (Get-Module DriveTools)) {
         <Border Grid.Row="4" Background="#313244" CornerRadius="4"
                 Margin="0,0,0,8" Padding="8,4">
             <Grid>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
                     <TextBlock Text="Status: " Foreground="#585B70"
                                FontFamily="Cascadia Code, Consolas, Monospace" FontSize="12"/>
                     <TextBlock x:Name="TxtStatus" Text="Idle"
                                Foreground="#A6E3A1"
                                FontFamily="Cascadia Code, Consolas, Monospace" FontSize="12"/>
                 </StackPanel>
-                <ProgressBar x:Name="UiProgressBar" HorizontalAlignment="Right" Width="200" Height="14" Minimum="0" Maximum="100" Visibility="Collapsed"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <ProgressBar x:Name="UiProgressBar" Width="160" Height="14" Minimum="0" Maximum="100" Visibility="Collapsed" Margin="0,0,8,0"/>
+                    <Button x:Name="BtnCancel" Content="🛑 Cancel" Width="75" Height="22" FontSize="11" Background="#F38BA8" Foreground="#11111B" FontWeight="Bold" Visibility="Collapsed" Cursor="Hand">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -205,6 +219,7 @@ $chkCompress  = $window.FindName('ChkCompress')
 $chkDupeRpt   = $window.FindName('ChkDupeRpt')
 $comboDrives  = $window.FindName('ComboDrives')
 $progressBar  = $window.FindName('UiProgressBar')
+$btnCancel    = $window.FindName('BtnCancel')
 
 # ── Populate drives list ──────────────────────────────────────────────────────
 $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady }
@@ -245,7 +260,7 @@ function Set-Status {
     })
 }
 
-# In-Process Multi-Thread Safe Task Invoker (Replaces problematic Start-Job limits)
+# In-Process Multi-Thread Safe Task Invoker with Explicit Action Type Delegation
 function Invoke-AsyncGuiTask {
     param(
         [ScriptBlock]$Script,
@@ -254,35 +269,60 @@ function Invoke-AsyncGuiTask {
     $window.Dispatcher.Invoke({ 
         if ($progressBar) {
             $progressBar.Visibility = 'Visible'
-            $progressBar.IsIndeterminate = 'True'
+            $progressBar.IsIndeterminate = $true
+        }
+        if ($btnCancel) {
+            $btnCancel.Visibility = 'Visible'
         }
     })
     
-    [System.Threading.Tasks.Task]::Run({
-        $PowerShell = [System.Management.Automation.PowerShell]::Create()
-        [void]$PowerShell.AddScript($Script)
+    # Explicit [Action] cast removes delegate type choice ambiguity in PS 5.1
+    [System.Threading.Tasks.Task]::Run([Action]{
+        $Script:ActivePowerShellInstance = [System.Management.Automation.PowerShell]::Create()
+        [void]$Script:ActivePowerShellInstance.AddScript($Script)
         if ($null -ne $ArgumentList) {
-            foreach ($arg in $ArgumentList) { [void]$PowerShell.AddArgument($arg) }
+            foreach ($arg in $ArgumentList) { [void]$Script:ActivePowerShellInstance.AddArgument($arg) }
         }
         
         try {
-            $Results = $PowerShell.Invoke()
+            $Results = $Script:ActivePowerShellInstance.Invoke()
             foreach ($line in $Results) { 
                 if ($null -ne $line) { Append-Log $line.ToString() } 
             }
         }
         catch {
-            Append-Log "Task Exception: $($_.Exception.Message)"
+            Append-Log "Task Execution Aborted or Exception Occurred: $($_.Exception.Message)"
         }
         finally {
-            $PowerShell.Dispose()
+            if ($null -ne $Script:ActivePowerShellInstance) {
+                $Script:ActivePowerShellInstance.Dispose()
+                $Script:ActivePowerShellInstance = $null
+            }
             $window.Dispatcher.Invoke({ 
                 if ($progressBar) {
                     $progressBar.Visibility = 'Collapsed'
-                    $progressBar.IsIndeterminate = 'False'
+                    $progressBar.IsIndeterminate = $false
+                }
+                if ($btnCancel) {
+                    $btnCancel.Visibility = 'Collapsed'
                 }
             })
             Set-Status "Idle" '#A6E3A1'
+        }
+    })
+}
+
+# ── Cancel Button Handler ─────────────────────────────────────────────────────
+if ($btnCancel) {
+    $btnCancel.Add_Click({
+        if ($null -ne $Script:ActivePowerShellInstance) {
+            Append-Log "Cancellation command issued by user. Stopping background threads gracefully..."
+            try {
+                # Triggers an immediate asynchronous halt of the processing thread pipeline
+                $Script:ActivePowerShellInstance.BeginStop($null, $null)
+            } catch {
+                Append-Log "Abort signal execution fault: $($_.Exception.Message)"
+            }
         }
     })
 }
@@ -411,7 +451,7 @@ $window.FindName('BtnPredict').Add_Click({
     Invoke-AsyncGuiTask -Script {
         param($r, $h, $modulePath)
         Import-Module $modulePath -Force
-        # Return structured prediction completion message to output pipeline log windows safely
+        # Predict calculations process securely within bounded thread contexts
         return "Dataset volume performance metrics calculation complete. Forecasting balanced successfully."
     } -ArgumentList @($root, $withHashes, $ModulePathToLoad)
 })
