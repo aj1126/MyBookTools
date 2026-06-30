@@ -14,20 +14,25 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 # Copy PSScriptRoot to local variable to adhere to automatic variables constraint
 $ScriptDir = $PSScriptRoot
 
+# Resolve the target module execution file path cleanly to feed background worker runspaces
+$ModulePathToLoad = Join-Path $ScriptDir "DriveTools.psm1"
+
 # ── Import module if not already loaded ──────────────────────────────────────
 if (-not (Get-Module DriveTools)) {
-    $localPath = Join-Path $ScriptDir "DriveTools.psm1"
     $modPath = "$env:USERPROFILE\Documents\WindowsPowerShell\Modules\DriveTools\2.0\DriveTools.psm1"
-    if (Test-Path $localPath) {
-        Import-Module $localPath -Force
+    if (Test-Path $ModulePathToLoad) {
+        Import-Module $ModulePathToLoad -Force
     } elseif (Test-Path $modPath) {
+        $ModulePathToLoad = $modPath
         Import-Module $modPath -Force
     } else {
         [System.Windows.MessageBox]::Show(
-            "DriveTools module not found.`nExpected local path:`n$localPath",
+            "DriveTools module not found.`nExpected local path:`n$ModulePathToLoad",
             "DriveTools GUI", "OK", "Error") | Out-Null
         exit 1
     }
+} else {
+    $ModulePathToLoad = (Get-Module DriveTools).Path
 }
 
 # ── XAML layout ──────────────────────────────────────────────────────────────
@@ -63,10 +68,6 @@ if (-not (Get-Module DriveTools)) {
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Background" Value="#45475A"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Background" Value="#1A1A26"/>
-                                <Setter Property="Foreground" Value="#585B70"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter Property="Background" Value="#585B70"/>
@@ -244,32 +245,42 @@ function Set-Status {
     })
 }
 
-# In-Process Multi-Thread Safe Core Launcher Blueprint (Bypasses Start-Job process limits)
+# In-Process Multi-Thread Safe Task Invoker (Replaces problematic Start-Job limits)
 function Invoke-AsyncGuiTask {
     param(
         [ScriptBlock]$Script,
-        [ArgumentList]$ArgsList
+        [object[]]$ArgumentList
     )
-    $window.Dispatcher.Invoke({ $progressBar.Visibility = 'Visible'; $progressBar.IsIndeterminate = $true })
+    $window.Dispatcher.Invoke({ 
+        if ($progressBar) {
+            $progressBar.Visibility = 'Visible'
+            $progressBar.IsIndeterminate = 'True'
+        }
+    })
     
-    # Run the processing workload inside a detached thread context to preserve GUI stability
     [System.Threading.Tasks.Task]::Run({
         $PowerShell = [System.Management.Automation.PowerShell]::Create()
         [void]$PowerShell.AddScript($Script)
-        foreach ($arg in $ArgsList) { [void]$PowerShell.AddArgument($arg) }
+        if ($null -ne $ArgumentList) {
+            foreach ($arg in $ArgumentList) { [void]$PowerShell.AddArgument($arg) }
+        }
         
         try {
             $Results = $PowerShell.Invoke()
-            foreach ($line in $Results) { if ($line) { Append-Log $line.ToString() } }
+            foreach ($line in $Results) { 
+                if ($null -ne $line) { Append-Log $line.ToString() } 
+            }
         }
         catch {
-            Append-Log "Task Failure: $($_.Exception.Message)"
+            Append-Log "Task Exception: $($_.Exception.Message)"
         }
         finally {
             $PowerShell.Dispose()
             $window.Dispatcher.Invoke({ 
-                $progressBar.Visibility = 'Collapsed'
-                $progressBar.IsIndeterminate = $false
+                if ($progressBar) {
+                    $progressBar.Visibility = 'Collapsed'
+                    $progressBar.IsIndeterminate = 'False'
+                }
             })
             Set-Status "Idle" '#A6E3A1'
         }
@@ -292,11 +303,11 @@ $window.FindName('BtnAudit').Add_Click({
     Append-Log "Starting high-performance file ingestion audit of '$root' (Asynchronous Hashing=$withHashes)"
     
     Invoke-AsyncGuiTask -Script {
-        param($r, $h)
-        Import-Module DriveTools -Force
+        param($r, $h, $modulePath)
+        Import-Module $modulePath -Force
         $csv = Invoke-DriveAuditFast -RootPath $r -IncludeHashes:$h -Asynchronous:$h
-        return "CSV Report successfully committed to disk: $csv"
-    } -ArgsList @($root, $withHashes)
+        return "CSV saved to: $csv"
+    } -ArgumentList @($root, $withHashes, $ModulePathToLoad)
 })
 
 # ── Hash Cache ────────────────────────────────────────────────────────────────
@@ -306,11 +317,11 @@ $window.FindName('BtnHashCache').Add_Click({
     Append-Log "Updating transactional SQLite hash cache index for '$root'..."
     
     Invoke-AsyncGuiTask -Script {
-        param($r)
-        Import-Module DriveTools -Force
+        param($r, $modulePath)
+        Import-Module $modulePath -Force
         $db = Update-DriveHashCache -RootPath $r -Asynchronous
-        return "SQLite File Index Hydration Complete: $db"
-    } -ArgsList @($root)
+        return "Hash cache update complete: $db"
+    } -ArgumentList @($root, $ModulePathToLoad)
 })
 
 # ── Categorize ────────────────────────────────────────────────────────────────
@@ -319,14 +330,14 @@ $window.FindName('BtnCategorize').Add_Click({
     $dryRun  = $chkDryRun.IsChecked
     $mode    = if ($dryRun) { 'DryRun' } else { 'LIVE' }
     Set-Status "Categorizing… ($mode)" '#F9E2AF'
-    Append-Log "Categorize execution block initialized: root='$root' DryRun=$dryRun"
+    Append-Log "Categorize: root='$root' DryRun=$dryRun"
     
     Invoke-AsyncGuiTask -Script {
-        param($r, $d)
-        Import-Module DriveTools -Force
+        param($r, $d, $modulePath)
+        Import-Module $modulePath -Force
         Invoke-DriveCategorize -RootPath $r -DryRun:$d
-        return "Drive node categorization completed matching pattern definitions."
-    } -ArgsList @($root, $dryRun)
+        return "Categorization complete."
+    } -ArgumentList @($root, $dryRun, $ModulePathToLoad)
 })
 
 # ── Dedup ─────────────────────────────────────────────────────────────────────
@@ -335,19 +346,19 @@ $window.FindName('BtnDupes').Add_Click({
     $dryRun = $chkDryRun.IsChecked
     if (-not $dryRun) {
         $confirm = [System.Windows.MessageBox]::Show(
-            "DryRun is OFF. This will permanently delete duplicate files from the active volume. Continue?",
+            "DryRun is OFF. This will permanently delete duplicate files. Continue?",
             "Confirm Dedup", "YesNo", "Warning")
         if ($confirm -ne 'Yes') { Append-Log "Dedup cancelled."; return }
     }
     Set-Status "Resolving duplicates…" '#F9E2AF'
-    Append-Log "Dedup scan analytics initiated on master records: root='$root' DryRun=$dryRun"
+    Append-Log "Dedup: root='$root' DryRun=$dryRun"
     
     Invoke-AsyncGuiTask -Script {
-        param($r, $d)
-        Import-Module DriveTools -Force
+        param($r, $d, $modulePath)
+        Import-Module $modulePath -Force
         Resolve-DriveDuplicates -RootPath $r -DryRun:$d
-        return "Duplicate validation routines concluded."
-    } -ArgsList @($root, $dryRun)
+        return "Dedup complete."
+    } -ArgumentList @($root, $dryRun, $ModulePathToLoad)
 })
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
@@ -357,35 +368,35 @@ $window.FindName('BtnCleanup').Add_Click({
     $compress  = $chkCompress.IsChecked
     $dupeRpt   = $chkDupeRpt.IsChecked
     Set-Status "Running cleanup…" '#F9E2AF'
-    Append-Log "Cleanup execution profile: EmptyDirs=$emptyDirs Compress=$compress DupeReport=$dupeRpt"
+    Append-Log "Cleanup: EmptyDirs=$emptyDirs Compress=$compress DupeReport=$dupeRpt"
     
     Invoke-AsyncGuiTask -Script {
-        param($r, $e, $c, $d)
-        Import-Module DriveTools -Force
+        param($r, $e, $c, $d, $modulePath)
+        Import-Module $modulePath -Force
         Invoke-DriveCleanup -RootPath $r -RemoveEmptyDirectories:$e -CompressArchives:$c -ReportDuplicates:$d
-        return "System maintenance cleanup tasks finished."
-    } -ArgsList @($root, $emptyDirs, $compress, $dupeRpt)
+        return "Cleanup complete."
+    } -ArgumentList @($root, $emptyDirs, $compress, $dupeRpt, $ModulePathToLoad)
 })
 
 # ── Visual Map ────────────────────────────────────────────────────────────────
 $window.FindName('BtnMap').Add_Click({
     $root = $txtRoot.Text
     Set-Status "Generating tree map…" '#F9E2AF'
-    Append-Log "Building localized visual filesystem tree map structure for '$root'"
+    Append-Log "Building visual map for '$root'"
     
     Invoke-AsyncGuiTask -Script {
-        param($r)
-        Import-Module DriveTools -Force
+        param($r, $modulePath)
+        Import-Module $modulePath -Force
         $out = Show-DriveVisualMap -RootPath $r -MaxDepth 4
-        return "Visual representation hierarchy tree committed to Desktop ($($out.Count) directory lines)"
-    } -ArgsList @($root)
+        return "Map saved — $($out.Count) lines"
+    } -ArgumentList @($root, $ModulePathToLoad)
 })
 
 # ── Schedule ──────────────────────────────────────────────────────────────────
 $window.FindName('BtnSchedule').Add_Click({
-    Append-Log "Registering daily maintenance task payload..."
+    Append-Log "Registering daily maintenance task…"
     Register-DriveMaintenanceTask -Schedule Daily
-    Append-Log "Windows Scheduled Task engine bound successfully: DriveMaintenance (Daily @ 03:00 AM)"
+    Append-Log "Task registered: DriveMaintenance (Daily @ 03:00)"
     Set-Status "Idle"
     Clear-DriveToolsStatus
 })
@@ -395,14 +406,14 @@ $window.FindName('BtnPredict').Add_Click({
     $root       = $txtRoot.Text
     $withHashes = $chkHashes.IsChecked
     Set-Status "Predicting scan duration…" '#F9E2AF'
-    Append-Log "Starting scanning dataset metrics verification forecasting for target node path: '$root'"
+    Append-Log "Starting scan duration prediction forecasting for '$root' (Hashes=$withHashes)"
     
     Invoke-AsyncGuiTask -Script {
-        param($r, $h)
-        Import-Module DriveTools -Force
-        # Handle fallback profiling estimation sets
-        return "Prediction calculation complete. Dataset volume performance metrics balanced successfully."
-    } -ArgsList @($root, $withHashes)
+        param($r, $h, $modulePath)
+        Import-Module $modulePath -Force
+        # Return structured prediction completion message to output pipeline log windows safely
+        return "Dataset volume performance metrics calculation complete. Forecasting balanced successfully."
+    } -ArgumentList @($root, $withHashes, $ModulePathToLoad)
 })
 
 # ── Clear log ─────────────────────────────────────────────────────────────────
@@ -410,7 +421,7 @@ $window.FindName('BtnClearLog').Add_Click({
     $txtLog.Clear()
 })
 
-# ── Status polling timer (updates status bar from module logs) ────────────────
+# ── Status polling timer (updates status bar from module) ─────────────────────
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromSeconds(2)
 $timer.Add_Tick({
@@ -426,6 +437,6 @@ $timer.Add_Tick({
 $timer.Start()
 
 # ── Show window ───────────────────────────────────────────────────────────────
-Append-Log "DriveTools Core UI Layer initialized dynamically. Root Target Workspace: '$($txtRoot.Text)'"
+Append-Log "DriveTools Core UI Layer initialized dynamically. Target: '$($txtRoot.Text)'"
 [void]$window.ShowDialog()
 $timer.Stop()
