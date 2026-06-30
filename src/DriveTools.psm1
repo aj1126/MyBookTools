@@ -5,7 +5,8 @@
 .DESCRIPTION
     Refactored to support any storage drive on the system using an optimized SQLite database index,
     memory-safe queue directory traversal, ultra-high-speed WizTree MFT-level metadata ingestion,
-    and a production-grade multi-threaded asynchronous worker runspace pool pipeline.
+    and a production-grade multi-threaded asynchronous worker runspace pool pipeline optimized
+    for mechanical HDD sequential read streams.
 #>
 
 # =====================================================================
@@ -49,7 +50,6 @@ function Import-SQLiteDependency {
             New-Item -Path $InteropDir -ItemType Directory -Force | Out-Null
         }
 
-        # Pull secure NuGet core framework mirrors
         $NugetUri = "https://www.nuget.org/api/v2/package/Stub.System.Data.SQLite.Core.NetFramework/1.0.118"
         $ZipPath = Join-Path $LibDir "sqlite.zip"
 
@@ -91,7 +91,6 @@ function Get-DriveToolsRootPath {
         throw "No ready drives found."
     }
 
-    # If non-interactive or running in automated tests
     if (-not [Environment]::UserInteractive) {
         return $drives[0].Name
     }
@@ -150,7 +149,7 @@ function Set-DriveToolsStatus {
         $statusFile = Join-Path $Script:DriveTools_DefaultLogRoot 'DriveTools_Status.json'
         $Script:DriveTools_Status | ConvertTo-Json | Set-Content -Path $statusFile -Encoding UTF8
     } catch {
-        # PSAvoidEmptyCatchBlock explanation: Ignore serialization lock constraints to keep tasks uninterrupted
+        # PSAvoidEmptyCatchBlock: Ignore serialization locks
     }
 }
 
@@ -166,7 +165,7 @@ function Clear-DriveToolsStatus {
             Remove-Item -Path $statusFile -Force -ErrorAction SilentlyContinue
         }
     } catch {
-        # PSAvoidEmptyCatchBlock explanation: Safe fallback bypass for concurrent handle access
+        # PSAvoidEmptyCatchBlock: Safe fallback
     }
 }
 
@@ -184,7 +183,7 @@ function Get-DriveToolsStatus {
                 }
             }
         } catch {
-            # PSAvoidEmptyCatchBlock explanation: Fallback to active heap snapshot reference safely
+            # PSAvoidEmptyCatchBlock: Fallback safely
         }
     }
     $Script:DriveTools_Status
@@ -318,10 +317,13 @@ function Update-DriveHashCache {
             $SyncInput = [System.Collections.Queue]::Synchronized((New-Object System.Collections.Queue))
             $SyncOutput = [System.Collections.Queue]::Synchronized((New-Object System.Collections.Queue))
             $SyncState = [Hashtable]::Synchronized(@{ IsProducerDone = $false })
-            $MaxThreads = [Environment]::ProcessorCount
             
-            Write-Verbose ("[Asynchronous Engine] Initializing RunspacePool with $MaxThreads isolated kernels...")
-            $Pool = [RunspaceFactory]::CreateRunspacePool(1, $MaxThreads)
+            # To prevent mechanical disk I/O thrashing, limit concurrent reads to max 4 handles
+            $MaxThreads = [Math]::Min([int][Environment]::ProcessorCount, [int]4)
+            
+            Write-Verbose ("[Asynchronous Engine] Initializing RunspacePool with $MaxThreads I/O optimized threads...")
+            $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()
+            $Pool = [runspacefactory]::CreateRunspacePool(1, $MaxThreads, $iss, $Host)
             $Pool.Open()
             
             for ($i = 0; $i -lt $MaxThreads; $i++) {
@@ -337,19 +339,18 @@ function Update-DriveHashCache {
                                 try { $item = $InputQueue.Dequeue() } catch { $item = $null }
                             }
                             if ($null -eq $item) {
-                                if ($State.IsProducerDone -and $InputQueue.Count -eq 0) {
-                                    break
-                                }
+                                if ($State.IsProducerDone -and $InputQueue.Count -eq 0) { break }
                                 [System.Threading.Thread]::Sleep(15)
                                 continue
                             }
                             try {
                                 if ([System.IO.File]::Exists($item.Path)) {
-                                    $stream = [System.IO.File]::OpenRead($item.Path)
+                                    # Massive 4MB streaming buffer bypasses native Get-FileHash chunking limitations
+                                    $stream = New-Object System.IO.FileStream($item.Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite, 4194304)
                                     $hashBytes = $sha.ComputeHash($stream)
                                     $stream.Close()
                                     $stream.Dispose()
-                                    $item.Hash = [System.BitConverter]::ToString($hashBytes) -replace '-'
+                                    $item.Hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "")
                                 } else {
                                     $item.Hash = ""
                                 }
@@ -372,13 +373,7 @@ function Update-DriveHashCache {
                 throw "WizTree executable mapping target reference not found at: $WizTreePath"
             }
             $TempCsv = [System.IO.Path]::GetTempFileName()
-            $procArgs = @(
-                "`"$resolvedPath`"",
-                "/export=`"$TempCsv`"",
-                "/exportfolders=0",
-                "/admin=1",
-                "/exportdrivecapacity=0"
-            )
+            $procArgs = @("`"$resolvedPath`"", "/export=`"$TempCsv`"", "/exportfolders=0", "/admin=1", "/exportdrivecapacity=0")
             
             Write-Verbose "[WizTree] Launching direct MFT binary database export to temporary mirror file..."
             $WizProcess = Start-Process -FilePath $WizTreePath -ArgumentList $procArgs -Wait -NoNewWindow -PassThru
@@ -403,23 +398,27 @@ function Update-DriveHashCache {
                 $fields = $parser.ReadFields()
                 if (-not $fields -or $fields.Count -lt 5) { continue }
 
+                # Explicit CSV Index Parsing
                 $filePath = $fields[0]
                 $length = [int64]0
-                if (-not [int64]::TryParse($fields[2], [ref]$length)) { continue }
+                if (-not [int64]::TryParse($fields[1], [ref]$length)) { continue }
 
-                $dateStr = $fields[4]
+                $dateStr = $fields[3]
                 $lastWrite = $dateStr
                 $parsedDate = [DateTime]::MinValue
                 if ([DateTime]::TryParse($dateStr, [ref]$parsedDate)) {
                     $lastWrite = $parsedDate.ToString('o')
                 }
 
+                # Safe Guard: Skip Reparse Points and Symlinks that cause infinite deadlocks
+                $attributes = ""
+                if ($fields.Count -gt 4) { $attributes = $fields[4] }
+                if ($attributes -match "L") { continue }
+
                 $totalProcessed++
                 if ($totalProcessed % 5000 -eq 0) {
                     $progressMsg = "Processed: $totalProcessed (Hits: $cacheHitsCount, Misses: $cacheMissesCount)"
-                    $progressArgs = @('Update-DriveHashCache (WizTree Engine)', $progressMsg, $totalProcessed)
-                    Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 1
-                    Write-Verbose ("{0} nodes processed into tracking state tables..." -f $totalProcessed)
+                    Write-Progress -Activity 'Update-DriveHashCache (WizTree Engine)' -Status $progressMsg -Id 1
                 }
 
                 $hash = $null
@@ -445,7 +444,12 @@ function Update-DriveHashCache {
                 if (-not $cacheHit) {
                     $cacheMissesCount++
                     if ($Asynchronous) {
+                        $throttleLoops = 0
                         while ($SyncInput.Count -gt 20000) {
+                            $throttleLoops++
+                            if ($throttleLoops % 20 -eq 0) {
+                                Write-Progress -Activity 'Update-DriveHashCache' -Status "I/O Backpressure: Waiting for background pool to hash $($SyncInput.Count) pending files..." -Id 1
+                            }
                             [System.Threading.Thread]::Sleep(30)
                             while ($SyncOutput.Count -gt 0) {
                                 $finished = $SyncOutput.Dequeue()
@@ -461,10 +465,6 @@ function Update-DriveHashCache {
                         $SyncInput.Enqueue(@{ Path = $filePath; Length = $length; LastWriteTime = $lastWrite })
                     } else {
                         try {
-                            if ($length -gt 52428800) {
-                                $mbSize = [math]::Round($length / 1MB, 2)
-                                Write-Verbose ("  [Heavy Dynamic Checksum] Hashing block ({0} MB): {1}" -f $mbSize, $filePath)
-                            }
                             $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
                         } catch {
                             $hash = $null
@@ -527,9 +527,7 @@ function Update-DriveHashCache {
                         $totalProcessed++
                         if ($totalProcessed % 5000 -eq 0) {
                             $progressMsg = "Processed: $totalProcessed (Hits: $cacheHitsCount, Misses: $cacheMissesCount)"
-                            $progressArgs = @('Update-DriveHashCache (Queue Engine)', $progressMsg, $totalProcessed)
-                            Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 1
-                            Write-Verbose ("{0} sequential nodes traversed and cached..." -f $totalProcessed)
+                            Write-Progress -Activity 'Update-DriveHashCache (Queue Engine)' -Status $progressMsg -Id 1
                         }
 
                         $pCheckName.Value = $filePath
@@ -554,7 +552,12 @@ function Update-DriveHashCache {
                         if (-not $cacheHit) {
                             $cacheMissesCount++
                             if ($Asynchronous) {
+                                $throttleLoops = 0
                                 while ($SyncInput.Count -gt 20000) {
+                                    $throttleLoops++
+                                    if ($throttleLoops % 20 -eq 0) {
+                                        Write-Progress -Activity 'Update-DriveHashCache' -Status "I/O Backpressure: Waiting on $($SyncInput.Count) pending files..." -Id 1
+                                    }
                                     [System.Threading.Thread]::Sleep(30)
                                     while ($SyncOutput.Count -gt 0) {
                                         $finished = $SyncOutput.Dequeue()
@@ -570,10 +573,6 @@ function Update-DriveHashCache {
                                 $SyncInput.Enqueue(@{ Path = $filePath; Length = $length; LastWriteTime = $lastWrite })
                             } else {
                                 try {
-                                    if ($length -gt 52428800) {
-                                        $mbSize = [math]::Round($length / 1MB, 2)
-                                        Write-Verbose ("  [Heavy Dynamic Checksum] Hashing block ({0} MB): {1}" -f $mbSize, $filePath)
-                                    }
                                     $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
                                 } catch {
                                     $hash = $null
@@ -624,6 +623,8 @@ function Update-DriveHashCache {
                     }
                 }
                 
+                Write-Progress -Activity 'Update-DriveHashCache' -Status "Finalizing I/O Data: $($SyncInput.Count) hashes remaining in pool..." -Id 1
+                
                 $allDone = $true
                 foreach ($w in $Workers) {
                     if (-not $w.Handle.IsCompleted) {
@@ -632,9 +633,7 @@ function Update-DriveHashCache {
                     }
                 }
                 
-                if ($allDone -and $SyncOutput.Count -eq 0) {
-                    break
-                }
+                if ($allDone -and $SyncOutput.Count -eq 0) { break }
                 [System.Threading.Thread]::Sleep(30)
             }
 
@@ -648,9 +647,7 @@ function Update-DriveHashCache {
         $transaction.Commit()
     } catch {
         if ($null -ne $transaction) {
-            try { $transaction.Rollback() } catch { 
-                # Safe fallback bypass
-            }
+            try { $transaction.Rollback() } catch { }
         }
         throw $_
     } finally {
@@ -662,14 +659,10 @@ function Update-DriveHashCache {
         $conn.Dispose()
         
         foreach ($w in $Workers) {
-            try { $w.PowerShell.Dispose() } catch { 
-                # Safe loop recovery release guard
-            }
+            try { $w.PowerShell.Dispose() } catch { }
         }
         if ($null -ne $Pool) {
-            try { $Pool.Close(); $Pool.Dispose() } catch { 
-                # Release RunspacePool hooks explicitly
-            }
+            try { $Pool.Close(); $Pool.Dispose() } catch { }
         }
         
         [System.GC]::Collect()
@@ -742,9 +735,10 @@ function Invoke-DriveAuditFast {
             $SyncInput = [System.Collections.Queue]::Synchronized((New-Object System.Collections.Queue))
             $SyncOutput = [System.Collections.Queue]::Synchronized((New-Object System.Collections.Queue))
             $SyncState = [Hashtable]::Synchronized(@{ IsProducerDone = $false })
-            $MaxThreads = [Environment]::ProcessorCount
+            $MaxThreads = [Math]::Min([int][Environment]::ProcessorCount, [int]4)
             
-            $Pool = [RunspaceFactory]::CreateRunspacePool(1, $MaxThreads)
+            $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()
+            $Pool = [RunspaceFactory]::CreateRunspacePool(1, $MaxThreads, $iss, $Host)
             $Pool.Open()
             
             for ($i = 0; $i -lt $MaxThreads; $i++) {
@@ -752,33 +746,35 @@ function Invoke-DriveAuditFast {
                 $PowerShell.RunspacePool = $Pool
                 [void]$PowerShell.AddScript({
                     param($InputQueue, $OutputQueue, $State)
-                    while ($true) {
-                        $item = $null
-                        if ($InputQueue.Count -gt 0) {
-                            try { $item = $InputQueue.Dequeue() } catch { $item = $null }
-                        }
-                        if ($null -eq $item) {
-                            if ($State.IsProducerDone -and $InputQueue.Count -eq 0) {
-                                break
+                    try {
+                        $sha = [System.Security.Cryptography.SHA256]::Create()
+                        while ($true) {
+                            $item = $null
+                            if ($InputQueue.Count -gt 0) {
+                                try { $item = $InputQueue.Dequeue() } catch { $item = $null }
                             }
-                            [System.Threading.Thread]::Sleep(15)
-                            continue
-                        }
-                        try {
-                            if ([System.IO.File]::Exists($item.Path)) {
-                                $stream = [System.IO.File]::OpenRead($item.Path)
-                                $sha = [System.Security.Cryptography.SHA256CryptoServiceProvider]::new()
-                                $hashBytes = $sha.ComputeHash($stream)
-                                $stream.Close()
-                                $stream.Dispose()
-                                $sha.Dispose()
-                                $item.Hash = [System.BitConverter]::ToString($hashBytes) -replace '-'
-                                $OutputQueue.Enqueue($item)
+                            if ($null -eq $item) {
+                                if ($State.IsProducerDone -and $InputQueue.Count -eq 0) { break }
+                                [System.Threading.Thread]::Sleep(15)
+                                continue
                             }
-                        } catch {
-                            $item.Hash = $null
+                            try {
+                                if ([System.IO.File]::Exists($item.Path)) {
+                                    $stream = New-Object System.IO.FileStream($item.Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite, 4194304)
+                                    $hashBytes = $sha.ComputeHash($stream)
+                                    $stream.Close()
+                                    $stream.Dispose()
+                                    $item.Hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "")
+                                } else {
+                                    $item.Hash = ""
+                                }
+                            } catch {
+                                $item.Hash = ""
+                            }
                             $OutputQueue.Enqueue($item)
                         }
+                    } finally {
+                        if ($null -ne $sha) { $sha.Dispose() }
                     }
                 }).AddArgument($SyncInput).AddArgument($SyncOutput).AddArgument($SyncState)
                 $Handle = $PowerShell.BeginInvoke()
@@ -791,13 +787,7 @@ function Invoke-DriveAuditFast {
                 throw "WizTree executable mapping target reference not found at: $WizTreePath"
             }
             $TempCsv = [System.IO.Path]::GetTempFileName()
-            $procArgs = @(
-                "`"$resolvedPath`"",
-                "/export=`"$TempCsv`"",
-                "/exportfolders=0",
-                "/admin=1",
-                "/exportdrivecapacity=0"
-            )
+            $procArgs = @("`"$resolvedPath`"", "/export=`"$TempCsv`"", "/exportfolders=0", "/admin=1", "/exportdrivecapacity=0")
             
             Write-Verbose "[WizTree] Launching direct MFT dump stream parsing..."
             [void](Start-Process -FilePath $WizTreePath -ArgumentList $procArgs -Wait -NoNewWindow)
@@ -820,21 +810,23 @@ function Invoke-DriveAuditFast {
 
                 $filePath = $fields[0]
                 $len = [int64]0
-                [void][int64]::TryParse($fields[2], [ref]$len)
+                [void][int64]::TryParse($fields[1], [ref]$len)
                 $ext = [System.IO.Path]::GetExtension($filePath)
 
-                $dateStr = $fields[4]
+                $dateStr = $fields[3]
                 $time = $dateStr
                 if ([DateTime]::TryParse($dateStr, [ref]$parsedDate)) {
                     $time = $parsedDate.ToString('o')
                 }
 
+                $attributes = ""
+                if ($fields.Count -gt 4) { $attributes = $fields[4] }
+                if ($attributes -match "L") { continue }
+
                 $totalProcessed++
                 if ($totalProcessed % 5000 -eq 0) {
                     $progressMsg = "Audited: $totalProcessed (Hits: $cacheHits, Misses: $cacheMisses)"
-                    $progressArgs = @('Invoke-DriveAuditFast (WizTree Engine)', $progressMsg, $totalProcessed)
-                    Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 2
-                    Write-Verbose ("{0} file records processed..." -f $totalProcessed)
+                    Write-Progress -Activity 'Invoke-DriveAuditFast (WizTree Engine)' -Status $progressMsg -Id 2
                 }
 
                 $hash = $null
@@ -856,7 +848,12 @@ function Invoke-DriveAuditFast {
                     if ($null -eq $hash) {
                         $cacheMisses++
                         if ($Asynchronous) {
+                            $throttleLoops = 0
                             while ($SyncInput.Count -gt 20000) {
+                                $throttleLoops++
+                                if ($throttleLoops % 20 -eq 0) {
+                                    Write-Progress -Activity 'Invoke-DriveAuditFast' -Status "I/O Backpressure: Waiting on $($SyncInput.Count) pending hashes..." -Id 2
+                                }
                                 [System.Threading.Thread]::Sleep(30)
                                 while ($SyncOutput.Count -gt 0) {
                                     $finished = $SyncOutput.Dequeue()
@@ -869,10 +866,6 @@ function Invoke-DriveAuditFast {
                             continue
                         } else {
                             try {
-                                if ($len -gt 52428800) {
-                                    $mbSize = [math]::Round($len / 1MB, 2)
-                                    Write-Verbose ("  [Heavy Dynamic Checksum] Hashing block ({0} MB): {1}" -f $mbSize, $filePath)
-                                }
                                 $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
                             } catch {
                                 $hash = $null
@@ -929,9 +922,8 @@ function Invoke-DriveAuditFast {
                         
                         $totalProcessed++
                         if ($totalProcessed % 5000 -eq 0) {
-                            $progressArgs = @('Invoke-DriveAuditFast (Queue Engine)', "Audited rows count: $totalProcessed", $totalProcessed)
-                            Write-Progress -Activity $progressArgs[0] -Status $progressArgs[1] -Id 2
-                            Write-Verbose ("{0} active nodes written to flat audit index table..." -f $totalProcessed)
+                            $progressMsg = "Audited rows count: $totalProcessed"
+                            Write-Progress -Activity 'Invoke-DriveAuditFast (Queue Engine)' -Status $progressMsg -Id 2
                         }
 
                         if ($IncludeHashes) {
@@ -952,7 +944,12 @@ function Invoke-DriveAuditFast {
                             if ($null -eq $hash) {
                                 $cacheMisses++
                                 if ($Asynchronous) {
+                                    $throttleLoops = 0
                                     while ($SyncInput.Count -gt 20000) {
+                                        $throttleLoops++
+                                        if ($throttleLoops % 20 -eq 0) {
+                                            Write-Progress -Activity 'Invoke-DriveAuditFast' -Status "I/O Backpressure: Waiting on $($SyncInput.Count) hashes..." -Id 2
+                                        }
                                         [System.Threading.Thread]::Sleep(30)
                                         while ($SyncOutput.Count -gt 0) {
                                             $finished = $SyncOutput.Dequeue()
@@ -965,10 +962,6 @@ function Invoke-DriveAuditFast {
                                     continue
                                 } else {
                                     try { 
-                                        if ($len -gt 52428800) {
-                                            $mbSize = [math]::Round($len / 1MB, 2)
-                                            Write-Verbose ("  [Heavy I/O Checksum] Hashing large asset node ({0} MB): {1}" -f $mbSize, $filePath)
-                                        }
                                         $hash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash 
                                     } catch { 
                                         $hash = $null
@@ -991,7 +984,7 @@ function Invoke-DriveAuditFast {
                             }
                         }
                     } catch {
-                        # PSAvoidEmptyCatchBlock explanation: Suppress isolated path reading errors
+                        # PSAvoidEmptyCatchBlock: Suppress errors
                     }
                 }
             }
@@ -1009,6 +1002,8 @@ function Invoke-DriveAuditFast {
                     $writer.WriteLine('"{0}",{1},"{2}","{3}","{4}"' -f $fmtArgs)
                 }
                 
+                Write-Progress -Activity 'Invoke-DriveAuditFast' -Status "Finalizing Report: $($SyncInput.Count) records remaining in runspace pool..." -Id 2
+                
                 $allDone = $true
                 foreach ($w in $Workers) {
                     if (-not $w.Handle.IsCompleted) {
@@ -1017,9 +1012,7 @@ function Invoke-DriveAuditFast {
                     }
                 }
                 
-                if ($allDone -and $SyncOutput.Count -eq 0) {
-                    break
-                }
+                if ($allDone -and $SyncOutput.Count -eq 0) { break }
                 [System.Threading.Thread]::Sleep(30)
             }
 
@@ -1035,9 +1028,7 @@ function Invoke-DriveAuditFast {
         if ($null -ne $conn) { $conn.Close(); $conn.Dispose() }
         
         foreach ($w in $Workers) {
-            try { $w.PowerShell.Dispose() } catch { 
-                # Safe recovery release guard
-            }
+            try { $w.PowerShell.Dispose() } catch { }
         }
         if ($null -ne $Pool) {
             try { $Pool.Close(); $Pool.Dispose() } catch { }
@@ -1417,4 +1408,3 @@ Invoke-DriveAuditFast | Out-Null
 # =====================================================================
 
 Export-ModuleMember -Function *-Drive*, Get-DriveToolsStatus, Set-DriveToolsStatus, Clear-DriveToolsStatus, Write-DriveToolsLog, Get-DriveToolsRootPath
-
