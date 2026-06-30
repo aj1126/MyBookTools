@@ -151,12 +151,14 @@ $Script:GuiContext = [hashtable]::Synchronized(@{
         </Grid>
 
         <WrapPanel Grid.Row="2" Margin="0,0,0,10">
-            <CheckBox x:Name="ChkHashes"       Content="Include Hashes"/>
-            <CheckBox x:Name="ChkDryRun"       Content="Dry Run"  IsChecked="True"/>
-            <CheckBox x:Name="ChkEmptyDirs"    Content="Remove Empty Dirs"/>
-            <CheckBox x:Name="ChkCompress"     Content="Compress Archives"/>
-            <CheckBox x:Name="ChkDupeRpt"      Content="Report Duplicates"/>
-            <CheckBox x:Name="ChkShowDetails"  Content="Show Details" IsChecked="False"/>
+            <CheckBox x:Name="ChkHashes"           Content="Include Hashes"/>
+            <CheckBox x:Name="ChkDryRun"           Content="Dry Run"  IsChecked="True"/>
+            <CheckBox x:Name="ChkEmptyDirs"        Content="Remove Empty Dirs"/>
+            <CheckBox x:Name="ChkCompress"         Content="Compress Archives"/>
+            <CheckBox x:Name="ChkDupeRpt"          Content="Report Duplicates"/>
+            <CheckBox x:Name="ChkShowDetails"      Content="Show Details" IsChecked="False"/>
+            <CheckBox x:Name="ChkAdvancedDetails"  Content="Advanced Details" IsChecked="False"/>
+            <CheckBox x:Name="ChkOutputToLog"      Content="Output to Log" IsChecked="False"/>
         </WrapPanel>
 
         <UniformGrid Grid.Row="3" Columns="3" Margin="0,0,0,8">
@@ -218,19 +220,20 @@ $reader = [System.Xml.XmlNodeReader]::new($xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # Named element references
-$txtRoot       = $window.FindName('TxtRoot')
-$txtStatus     = $window.FindName('TxtStatus')
-$txtLog        = $window.FindName('TxtLog')
-$logScroller   = $window.FindName('LogScroller')
-$chkHashes     = $window.FindName('ChkHashes')
-$chkDryRun     = $window.FindName('ChkDryRun')
-$chkEmptyDirs  = $window.FindName('ChkEmptyDirs')
-$chkCompress   = $window.FindName('ChkCompress')
-$chkDupeRpt    = $window.FindName('ChkDupeRpt')
+$txtRoot        = $window.FindName('TxtRoot')
+$txtStatus      = $window.FindName('TxtStatus')
+$txtLog         = $window.FindName('TxtLog')
+$logScroller    = $window.FindName('LogScroller')
+$chkHashes      = $window.FindName('ChkHashes')
+$chkDryRun      = $window.FindName('ChkDryRun')
+$chkEmptyDirs   = $window.FindName('ChkEmptyDirs')
+$chkCompress    = $window.FindName('ChkCompress')
+$chkDupeRpt     = $window.FindName('ChkDupeRpt')
 $chkShowDetails = $window.FindName('ChkShowDetails')
-$comboDrives   = $window.FindName('ComboDrives')
-$progressBar   = $window.FindName('UiProgressBar')
-$btnCancel     = $window.FindName('BtnCancel')
+$chkAdvancedDetails = $window.FindName('ChkAdvancedDetails')
+$comboDrives    = $window.FindName('ComboDrives')
+$progressBar    = $window.FindName('UiProgressBar')
+$btnCancel      = $window.FindName('BtnCancel')
 
 # ── Populate drives list ──────────────────────────────────────────────────────
 $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady }
@@ -261,6 +264,20 @@ function Append-Log {
         $txtLog.AppendText("[$ts] $Text`n")
         $logScroller.ScrollToEnd()
     })
+
+    # Thread-Safe File Logging Pipeline Interceptor
+    $opts = $window.FindName('ChkShowDetails') # Borrow thread context check
+    if ($window.FindName('ChkDupeRpt').Parent.Children | Where-Object { $_.Name -eq 'ChkCompress' }) {
+        # Check if output to log checkbox state is true (handled programmatically via dynamic variables)
+        $outputCheckbox = $window.FindName('ChkOutputToLog')
+        if ($outputCheckbox -and $outputCheckbox.IsChecked) {
+            try {
+                $fileDate = Get-Date -Format 'yyyy-MM-dd'
+                $uiSessionLog = Join-Path $env:USERPROFILE "Documents\DriveToolsLogs\DriveTools_GuiSession_$fileDate.log"
+                Add-Content -Path $uiSessionLog -Value "[$ts] $Text" -ErrorAction SilentlyContinue
+            } catch {}
+        }
+    }
 }
 
 function Set-Status {
@@ -291,7 +308,6 @@ function Invoke-AsyncGuiTask {
         [string]$RunningStatus
     )
     
-    # Strict Execution Protection Block
     if ($null -ne $Script:GuiContext.ActivePowerShell) {
         Append-Log "Operation Aborted: A background pipeline task is already processing entries. Please wait or cancel."
         return
@@ -305,10 +321,8 @@ function Invoke-AsyncGuiTask {
         if ($btnCancel) { $btnCancel.Visibility = 'Visible' }
     })
     
-    # Enforce mutual exclusion by freezing buttons and setting explicit status labels
     Set-UiButtonsState -Enabled $false
     
-    # Initialize timeline tracking anchors inside our global safe wrapper
     $Script:GuiContext.CustomStartTime = Get-Date
     $Script:GuiContext.CustomStatusText = $RunningStatus
     
@@ -529,36 +543,41 @@ $window.FindName('BtnClearLog').Add_Click({
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromSeconds(1)
 $timer.Add_Tick({
-    # Calculate live time tracking extensions if an engine task is active
+    # Calculate live timeline tracking indices
     $elapsedSuffix = ""
     if ($null -ne $Script:GuiContext.CustomStartTime) {
         $span = (Get-Date) - $Script:GuiContext.CustomStartTime
         $elapsedSuffix = " [{0:hh\:mm\:ss}]" -f $span
     }
 
-    # 1. Evaluate Module Logging Flags
+    # Extract dynamic advanced telemetry memory profiles
+    $advancedDetailsCheckbox = $window.FindName('ChkAdvancedDetails')
+    $telemetryString = ""
+    if ($advancedDetailsCheckbox -and $advancedDetailsCheckbox.IsChecked) {
+        $wsMemory = [System.Diagnostics.Process]::GetCurrentProcess().WorkingSet64 / 1MB
+        $gcHeapMemory = [System.GC]::GetTotalMemory($false) / 1MB
+        $telemetryString = " — RAM: [WS: $([math]::Round($wsMemory,1))MB | Heap: $([math]::Round($gcHeapMemory,1))MB]"
+    }
+
+    # 1. Update status text box from engine module if it registers an operation
     $s = Get-DriveToolsStatus
     if ($s.Operation) {
         if ($chkShowDetails.IsChecked) {
-            # Exhaustive Diagnostic Detail Mapping
-            Set-Status "$($s.Operation) — $($s.Details)$elapsedSuffix" '#F9E2AF'
+            Set-Status "$($s.Operation) — $($s.Details)${telemetryString}${elapsedSuffix}" '#F9E2AF'
         } else {
-            # Concise Visual Status Layout
-            Set-Status "$($s.Operation)...$elapsedSuffix" '#F9E2AF'
+            Set-Status "$($s.Operation)...${telemetryString}${elapsedSuffix}" '#F9E2AF'
         }
     } else {
-        # Only reset to Idle if NO background script block is actively processing tracks
         if ($null -eq $Script:GuiContext.ActivePowerShell) {
             if ($txtStatus.Text -notmatch "Idle") {
                 Set-Status "Idle" '#A6E3A1'
             }
         } else {
-            # Handle tasks that don't output JSON tracking nodes (like Predict)
             if ($Script:GuiContext.CustomStatusText) {
                 if ($chkShowDetails.IsChecked) {
-                    Set-Status "$($Script:GuiContext.CustomStatusText) — Traversing subdirectories$elapsedSuffix" '#F9E2AF'
+                    Set-Status "$($Script:GuiContext.CustomStatusText) — Traversing subdirectories${telemetryString}${elapsedSuffix}" '#F9E2AF'
                 } else {
-                    Set-Status "$($Script:GuiContext.CustomStatusText)...$elapsedSuffix" '#F9E2AF'
+                    Set-Status "$($Script:GuiContext.CustomStatusText)...${telemetryString}${elapsedSuffix}" '#F9E2AF'
                 }
             }
         }
@@ -582,13 +601,11 @@ $timer.Add_Tick({
                 try { $Script:GuiContext.OutputCollection.Dispose() } catch {}
             }
             
-            # Flush context tracker allocations cleanly
             $Script:GuiContext.ActivePowerShell = $null
             $Script:GuiContext.OutputCollection = $null
             $Script:GuiContext.CustomStartTime = $null
             $Script:GuiContext.CustomStatusText = ""
             
-            # Re-enable action controls now that the background process channel is empty
             Set-UiButtonsState -Enabled $true
             
             $window.Dispatcher.Invoke({ 
