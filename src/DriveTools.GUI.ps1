@@ -39,6 +39,8 @@ if (-not (Get-Module DriveTools)) {
 $Script:GuiContext = [hashtable]::Synchronized(@{
     ActivePowerShell = $null
     OutputCollection = $null
+    CustomStartTime  = $null
+    CustomStatusText = ""
 })
 
 # ── XAML layout ──────────────────────────────────────────────────────────────
@@ -149,11 +151,12 @@ $Script:GuiContext = [hashtable]::Synchronized(@{
         </Grid>
 
         <WrapPanel Grid.Row="2" Margin="0,0,0,10">
-            <CheckBox x:Name="ChkHashes"    Content="Include Hashes"/>
-            <CheckBox x:Name="ChkDryRun"    Content="Dry Run"  IsChecked="True"/>
-            <CheckBox x:Name="ChkEmptyDirs" Content="Remove Empty Dirs"/>
-            <CheckBox x:Name="ChkCompress"  Content="Compress Archives"/>
-            <CheckBox x:Name="ChkDupeRpt"   Content="Report Duplicates"/>
+            <CheckBox x:Name="ChkHashes"       Content="Include Hashes"/>
+            <CheckBox x:Name="ChkDryRun"       Content="Dry Run"  IsChecked="True"/>
+            <CheckBox x:Name="ChkEmptyDirs"    Content="Remove Empty Dirs"/>
+            <CheckBox x:Name="ChkCompress"     Content="Compress Archives"/>
+            <CheckBox x:Name="ChkDupeRpt"      Content="Report Duplicates"/>
+            <CheckBox x:Name="ChkShowDetails"  Content="Show Details" IsChecked="False"/>
         </WrapPanel>
 
         <UniformGrid Grid.Row="3" Columns="3" Margin="0,0,0,8">
@@ -215,18 +218,19 @@ $reader = [System.Xml.XmlNodeReader]::new($xaml)
 $window = [System.Windows.Markup.XamlReader]::Load($reader)
 
 # Named element references
-$txtRoot      = $window.FindName('TxtRoot')
-$txtStatus    = $window.FindName('TxtStatus')
-$txtLog       = $window.FindName('TxtLog')
-$logScroller  = $window.FindName('LogScroller')
-$chkHashes    = $window.FindName('ChkHashes')
-$chkDryRun    = $window.FindName('ChkDryRun')
-$chkEmptyDirs = $window.FindName('ChkEmptyDirs')
-$chkCompress  = $window.FindName('ChkCompress')
-$chkDupeRpt   = $window.FindName('ChkDupeRpt')
-$comboDrives  = $window.FindName('ComboDrives')
-$progressBar  = $window.FindName('UiProgressBar')
-$btnCancel    = $window.FindName('BtnCancel')
+$txtRoot       = $window.FindName('TxtRoot')
+$txtStatus     = $window.FindName('TxtStatus')
+$txtLog        = $window.FindName('TxtLog')
+$logScroller   = $window.FindName('LogScroller')
+$chkHashes     = $window.FindName('ChkHashes')
+$chkDryRun     = $window.FindName('ChkDryRun')
+$chkEmptyDirs  = $window.FindName('ChkEmptyDirs')
+$chkCompress   = $window.FindName('ChkCompress')
+$chkDupeRpt    = $window.FindName('ChkDupeRpt')
+$chkShowDetails = $window.FindName('ChkShowDetails')
+$comboDrives   = $window.FindName('ComboDrives')
+$progressBar   = $window.FindName('UiProgressBar')
+$btnCancel     = $window.FindName('BtnCancel')
 
 # ── Populate drives list ──────────────────────────────────────────────────────
 $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady }
@@ -303,6 +307,11 @@ function Invoke-AsyncGuiTask {
     
     # Enforce mutual exclusion by freezing buttons and setting explicit status labels
     Set-UiButtonsState -Enabled $false
+    
+    # Initialize timeline tracking anchors inside our global safe wrapper
+    $Script:GuiContext.CustomStartTime = Get-Date
+    $Script:GuiContext.CustomStatusText = $RunningStatus
+    
     if ($RunningStatus) { Set-Status $RunningStatus '#F9E2AF' }
     
     $PowerShellInstance = [System.Management.Automation.PowerShell]::Create()
@@ -326,6 +335,7 @@ function Invoke-AsyncGuiTask {
         Append-Log "Failed to initialize async runspace pipeline: $($_.Exception.Message)"
         $Script:GuiContext.ActivePowerShell = $null
         $Script:GuiContext.OutputCollection = $null
+        $Script:GuiContext.CustomStartTime = $null
         Set-UiButtonsState -Enabled $true
         $window.Dispatcher.Invoke({
             if ($progressBar) { $progressBar.Visibility = 'Collapsed' }
@@ -367,7 +377,7 @@ $window.FindName('BtnAudit').Add_Click({
         Import-Module $modulePath -Force
         $csv = Invoke-DriveAuditFast -RootPath $r -IncludeHashes:$h -Asynchronous:$h
         return "CSV saved to: $csv"
-    } -ArgumentList @($root, $withHashes, $ModulePathToLoad) -RunningStatus "Auditing Drive Tree..."
+    } -ArgumentList @($root, $withHashes, $ModulePathToLoad) -RunningStatus "Auditing Drive Tree"
 })
 
 # ── Hash Cache ────────────────────────────────────────────────────────────────
@@ -378,7 +388,7 @@ $window.FindName('BtnHashCache').Add_Click({
         Import-Module $modulePath -Force
         $db = Update-DriveHashCache -RootPath $r -Asynchronous
         return "Hash cache update complete: $db"
-    } -ArgumentList @($root, $ModulePathToLoad) -RunningStatus "Updating File Hash Index Cache..."
+    } -ArgumentList @($root, $ModulePathToLoad) -RunningStatus "Updating Hash Index Cache"
 })
 
 # ── Categorize ────────────────────────────────────────────────────────────────
@@ -391,7 +401,7 @@ $window.FindName('BtnCategorize').Add_Click({
         Import-Module $modulePath -Force
         Invoke-DriveCategorize -RootPath $r -DryRun:$d
         return "Categorization complete."
-    } -ArgumentList @($root, $dryRun, $ModulePathToLoad) -RunningStatus "Categorizing File Formats ($mode)..."
+    } -ArgumentList @($root, $dryRun, $ModulePathToLoad) -RunningStatus "Categorizing Formats ($mode)"
 })
 
 # ── Dedup ─────────────────────────────────────────────────────────────────────
@@ -409,7 +419,7 @@ $window.FindName('BtnDupes').Add_Click({
         Import-Module $modulePath -Force
         Resolve-DriveDuplicates -RootPath $r -DryRun:$d
         return "Dedup complete."
-    } -ArgumentList @($root, $dryRun, $ModulePathToLoad) -RunningStatus "Resolving Redundant Duplicates..."
+    } -ArgumentList @($root, $dryRun, $ModulePathToLoad) -RunningStatus "Resolving Redundant Duplicates"
 })
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
@@ -423,7 +433,7 @@ $window.FindName('BtnCleanup').Add_Click({
         Import-Module $modulePath -Force
         Invoke-DriveCleanup -RootPath $r -RemoveEmptyDirectories:$e -CompressArchives:$c -ReportDuplicates:$d
         return "Cleanup complete."
-    } -ArgumentList @($root, $emptyDirs, $compress, $dupeRpt, $ModulePathToLoad) -RunningStatus "Running Storage Maintenance Cleanups..."
+    } -ArgumentList @($root, $emptyDirs, $compress, $dupeRpt, $ModulePathToLoad) -RunningStatus "Running Storage Cleanups"
 })
 
 # ── Visual Map ────────────────────────────────────────────────────────────────
@@ -434,7 +444,7 @@ $window.FindName('BtnMap').Add_Click({
         Import-Module $modulePath -Force
         $out = Show-DriveVisualMap -RootPath $r -MaxDepth 4
         return "Map saved — $($out.Count) lines"
-    } -ArgumentList @($root, $ModulePathToLoad) -RunningStatus "Generating Tree Layout Mapping..."
+    } -ArgumentList @($root, $ModulePathToLoad) -RunningStatus "Generating Tree Layout Map"
 })
 
 # ── Schedule ──────────────────────────────────────────────────────────────────
@@ -507,7 +517,7 @@ $window.FindName('BtnPredict').Add_Click({
  Projected Performance Duration Estimate: $formattedTime
 ======================================================================
 "@
-    } -ArgumentList @($root, $withHashes, $ModulePathToLoad) -RunningStatus "Predicting Scan Duration..."
+    } -ArgumentList @($root, $withHashes, $ModulePathToLoad) -RunningStatus "Predicting Scan Duration"
 })
 
 # ── Clear log ─────────────────────────────────────────────────────────────────
@@ -519,15 +529,37 @@ $window.FindName('BtnClearLog').Add_Click({
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromSeconds(1)
 $timer.Add_Tick({
-    # 1. Update status text box from engine module if it registers an operation
+    # Calculate live time tracking extensions if an engine task is active
+    $elapsedSuffix = ""
+    if ($null -ne $Script:GuiContext.CustomStartTime) {
+        $span = (Get-Date) - $Script:GuiContext.CustomStartTime
+        $elapsedSuffix = " [{0:hh\:mm\:ss}]" -f $span
+    }
+
+    # 1. Evaluate Module Logging Flags
     $s = Get-DriveToolsStatus
     if ($s.Operation) {
-        Set-Status "$($s.Operation) — $($s.Details)" '#F9E2AF'
+        if ($chkShowDetails.IsChecked) {
+            # Exhaustive Diagnostic Detail Mapping
+            Set-Status "$($s.Operation) — $($s.Details)$elapsedSuffix" '#F9E2AF'
+        } else {
+            # Concise Visual Status Layout
+            Set-Status "$($s.Operation)...$elapsedSuffix" '#F9E2AF'
+        }
     } else {
         # Only reset to Idle if NO background script block is actively processing tracks
         if ($null -eq $Script:GuiContext.ActivePowerShell) {
             if ($txtStatus.Text -notmatch "Idle") {
                 Set-Status "Idle" '#A6E3A1'
+            }
+        } else {
+            # Handle tasks that don't output JSON tracking nodes (like Predict)
+            if ($Script:GuiContext.CustomStatusText) {
+                if ($chkShowDetails.IsChecked) {
+                    Set-Status "$($Script:GuiContext.CustomStatusText) — Traversing subdirectories$elapsedSuffix" '#F9E2AF'
+                } else {
+                    Set-Status "$($Script:GuiContext.CustomStatusText)...$elapsedSuffix" '#F9E2AF'
+                }
             }
         }
     }
@@ -550,8 +582,11 @@ $timer.Add_Tick({
                 try { $Script:GuiContext.OutputCollection.Dispose() } catch {}
             }
             
+            # Flush context tracker allocations cleanly
             $Script:GuiContext.ActivePowerShell = $null
             $Script:GuiContext.OutputCollection = $null
+            $Script:GuiContext.CustomStartTime = $null
+            $Script:GuiContext.CustomStatusText = ""
             
             # Re-enable action controls now that the background process channel is empty
             Set-UiButtonsState -Enabled $true
