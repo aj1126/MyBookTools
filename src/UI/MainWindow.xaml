@@ -1,0 +1,12 @@
+﻿<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DriveTools High-Performance Ingestion Engine" Height="220" Width="480" Background="#F3F3F3">
+    <Grid Margin="20">
+        <StackPanel VerticalAlignment="Center">
+            <TextBlock Name="StatusText" Text="Ready to initialize file systems scan..." FontWeight="SemiBold" Margin="0,0,0,8"/>
+            <TextBlock Name="PathText" Text="Target: None" FontSize="11" Foreground="#666666" Margin="0,0,0,15" TextTrimming="CharacterEllipsis"/>
+            <ProgressBar Name="AuditProgressBar" Height="20" Minimum="0" Maximum="100" IsIndeterminate="False"/>
+            <Button Name="StartButton" Content="Initialize Drive Audit" Height="30" Margin="0,20,0,0" Cursor="Hand"/>
+        </StackPanel>
+    </Grid>
+</Window>
