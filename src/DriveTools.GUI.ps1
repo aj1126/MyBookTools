@@ -262,7 +262,7 @@ function Set-Status {
     })
 }
 
-# In-Process Multi-Thread Safe Task Invoker (Explicit [Action] block conversion)
+# Native Thread-Safe Async Pipeline Handler (Bypasses .NET Task Overload Resolution Completely)
 function Invoke-AsyncGuiTask {
     param(
         [ScriptBlock]$Script,
@@ -276,41 +276,37 @@ function Invoke-AsyncGuiTask {
         if ($btnCancel) { $btnCancel.Visibility = 'Visible' }
     })
     
-    # Instantiate the instance on the UI thread to freeze and cache the reference context safely
+    # Initialize the engine runner natively on the main UI thread to capture state tracking securely
     $PowerShellInstance = [System.Management.Automation.PowerShell]::Create()
     [void]$PowerShellInstance.AddScript($Script)
     if ($null -ne $ArgumentList) {
         foreach ($arg in $ArgumentList) { [void]$PowerShellInstance.AddArgument($arg) }
     }
     
-    # Store reference inside the cross-thread context state capsule
-    $Script:GuiContext.ActivePowerShell = $PowerShellInstance
-    
-    # Casting to an explicit [Action] removes the delegate overloads choice ambiguity in PS 5.1
-    [System.Threading.Tasks.Task]::Run([Action]{
-        try {
-            $Results = $PowerShellInstance.Invoke()
-            foreach ($line in $Results) { 
-                if ($null -ne $line) { Append-Log $line.ToString() } 
-            }
-        }
-        catch {
-            Append-Log "Task Exception or Abort Interruption: $($_.Exception.Message)"
-        }
-        finally {
-            $PowerShellInstance.Dispose()
-            $Script:GuiContext.ActivePowerShell = $null
-            
-            $window.Dispatcher.Invoke({ 
-                if ($progressBar) {
-                    $progressBar.Visibility = 'Collapsed'
-                    $progressBar.IsIndeterminate = $false
-                }
-                if ($btnCancel) { $btnCancel.Visibility = 'Collapsed' }
-            })
-            Set-Status "Idle" '#A6E3A1'
+    # Create thread-safe real-time collection block for pipeline logging strings
+    $outputCollection = New-Object System.Management.Automation.PSDataCollection[PSObject]
+    $outputCollection.Add_DataAdding({
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.ItemValue) {
+            Append-Log $eventArgs.ItemValue.ToString()
         }
     })
+
+    # Safely commit to our synchronized cross-thread reference dictionary
+    $Script:GuiContext.ActivePowerShell = $PowerShellInstance
+    
+    # Run the processing pipeline completely decoupled from the UI draw frames
+    try {
+        [void]$PowerShellInstance.BeginInvoke($outputCollection)
+    }
+    catch {
+        Append-Log "Failed to invoke background runner execution frame: $($_.Exception.Message)"
+        $Script:GuiContext.ActivePowerShell = $null
+        $window.Dispatcher.Invoke({
+            if ($progressBar) { $progressBar.Visibility = 'Collapsed' }
+            if ($btnCancel) { $btnCancel.Visibility = 'Collapsed' }
+        })
+    }
 }
 
 # ── Cancel Button Click Logic ─────────────────────────────────────────────────
@@ -320,7 +316,7 @@ if ($btnCancel) {
         if ($null -ne $runningEngine) {
             Append-Log "Cancellation request received. Forcing background thread execution stop..."
             try {
-                # Stop() breaks any pipeline block instantly and terminates child workers
+                # Stop() breaks any pipeline block instantly and terminates child workers safely
                 $runningEngine.Stop()
             } catch {
                 Append-Log "Error sending stop invocation frame: $($_.Exception.Message)"
@@ -462,15 +458,44 @@ $window.FindName('BtnClearLog').Add_Click({
     $txtLog.Clear()
 })
 
-# ── Status polling timer (updates status bar from module) ─────────────────────
+# ── Status polling timer & Thread monitor loop ────────────────────────────────
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
-$timer.Interval = [TimeSpan]::FromSeconds(2)
+$timer.Interval = [TimeSpan]::FromSeconds(1)
 $timer.Add_Tick({
+    # 1. Evaluate Module Logging Flags
     $s = Get-DriveToolsStatus
     if ($s.Operation) {
         Set-Status "$($s.Operation) — $($s.Details)" '#F9E2AF'
     } else {
         if ($txtStatus.Text -notmatch "Running|Updating|Categorizing|Resolving|Predicting") {
+            Set-Status "Idle" '#A6E3A1'
+        }
+    }
+
+    # 2. Dynamic Pipeline Observer Lifecycle Manager
+    $runningEngine = $Script:GuiContext.ActivePowerShell
+    if ($null -ne $runningEngine) {
+        $state = $runningEngine.InvocationStateInfo.State
+        if ($state -eq 'Completed' -or $state -eq 'Stopped' -or $state -eq 'Failed') {
+            
+            # Surface any missing pipeline exceptions straight to the text block logs
+            if ($runningEngine.Streams.Error.Count -gt 0) {
+                foreach ($err in $runningEngine.Streams.Error) { Append-Log "Pipeline Error: $err" }
+            }
+            if ($state -eq 'Stopped') {
+                Append-Log "Current operation was forcefully aborted by user."
+            }
+
+            try { $runningEngine.Dispose() } catch {}
+            $Script:GuiContext.ActivePowerShell = $null
+            
+            $window.Dispatcher.Invoke({ 
+                if ($progressBar) {
+                    $progressBar.Visibility = 'Collapsed'
+                    $progressBar.IsIndeterminate = $false
+                }
+                if ($btnCancel) { $btnCancel.Visibility = 'Collapsed' }
+            })
             Set-Status "Idle" '#A6E3A1'
         }
     }
